@@ -1,7 +1,9 @@
 package org.sophie.security.context;
 
 import io.grpc.Context;
+import org.sophie.security.principal.AssertedUserPrincipal;
 import org.sophie.security.principal.SophiePrincipal;
+import org.sophie.security.principal.UserPrincipal;
 
 /**
  * Static {@link Context.Key}-backed accessor for the current call's verified principal — mirrors the
@@ -31,6 +33,19 @@ public final class SophieSecurityContext {
 
     public static boolean isPresent() {
         return current() != null;
+    }
+
+    /** Static equivalent of {@link PrincipalAccessor#currentInternalUserId()}, for call sites that
+     *  don't inject the accessor bean. */
+    public static String currentInternalUserId() {
+        SophiePrincipal principal = current();
+        if (principal instanceof UserPrincipal up) {
+            return up.internalUserId();
+        }
+        if (principal instanceof AssertedUserPrincipal aup) {
+            return aup.internalUserId();
+        }
+        return null;
     }
 
     /**

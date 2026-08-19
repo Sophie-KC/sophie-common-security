@@ -7,11 +7,14 @@ import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
+import io.grpc.Status;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sophie.security.comparison.IdentityComparisonLogger;
 import org.sophie.security.context.SophieSecurityContext;
 import org.sophie.security.jwt.JwtVerifier;
+import org.sophie.security.policy.PrincipalTier;
+import org.sophie.security.policy.PrincipalTierPolicy;
 import org.sophie.security.principal.AssertedUserPrincipal;
 import org.sophie.security.principal.ServicePrincipal;
 import org.sophie.security.principal.SophiePrincipal;
@@ -22,9 +25,13 @@ import java.security.MessageDigest;
 
 /**
  * Validates the caller's bearer JWT (or, absent one, the internal shared secret) and populates a
- * {@link SophiePrincipal} on the gRPC {@link Context}. Non-enforcing by design: any verification
- * failure or outright absence just proceeds with no principal — see {@link IdentityComparisonLogger}
- * for what surfaces that fact. This interceptor never rejects a call.
+ * {@link SophiePrincipal} on the gRPC {@link Context}.
+ *
+ * <p>Non-enforcing by default: any verification failure or outright absence just proceeds with no
+ * principal — see {@link IdentityComparisonLogger} for what surfaces that fact. When {@code enforce}
+ * is true, a call with no verifiable identity is rejected {@code UNAUTHENTICATED}, and a call whose
+ * principal is weaker than the RPC's {@link PrincipalTierPolicy} requirement is rejected
+ * {@code PERMISSION_DENIED} — before the call ever reaches the service implementation.
  */
 public class JwtServerInterceptor implements ServerInterceptor {
 
@@ -48,12 +55,21 @@ public class JwtServerInterceptor implements ServerInterceptor {
     private final JwtVerifier jwtVerifier;
     private final String expectedInternalSecret;
     private final IdentityComparisonLogger comparisonLogger;
+    private final boolean enforce;
+    private final PrincipalTierPolicy tierPolicy;
 
     public JwtServerInterceptor(JwtVerifier jwtVerifier, String expectedInternalSecret,
             IdentityComparisonLogger comparisonLogger) {
+        this(jwtVerifier, expectedInternalSecret, comparisonLogger, false, null);
+    }
+
+    public JwtServerInterceptor(JwtVerifier jwtVerifier, String expectedInternalSecret,
+            IdentityComparisonLogger comparisonLogger, boolean enforce, PrincipalTierPolicy tierPolicy) {
         this.jwtVerifier = jwtVerifier;
         this.expectedInternalSecret = expectedInternalSecret;
         this.comparisonLogger = comparisonLogger;
+        this.enforce = enforce;
+        this.tierPolicy = tierPolicy;
     }
 
     @Override
@@ -98,6 +114,25 @@ public class JwtServerInterceptor implements ServerInterceptor {
         String suppliedOrgRole = headers.get(ORG_ROLE);
 
         comparisonLogger.compare(methodName, principal, suppliedUserId);
+
+        if (enforce) {
+            PrincipalTier actualTier = PrincipalTier.of(principal);
+            if (actualTier == null) {
+                call.close(Status.UNAUTHENTICATED.withDescription(
+                        "No verified identity presented for " + methodName), new Metadata());
+                return new ServerCall.Listener<>() {};
+            }
+            PrincipalTier requiredTier = tierPolicy != null ? tierPolicy.requiredTier(methodName) : null;
+            if (requiredTier == null) {
+                requiredTier = PrincipalTierPolicy.DEFAULT_TIER;
+            }
+            if (actualTier.ordinal() < requiredTier.ordinal()) {
+                call.close(Status.PERMISSION_DENIED.withDescription(
+                        methodName + " requires " + requiredTier + ", caller presented " + actualTier),
+                        new Metadata());
+                return new ServerCall.Listener<>() {};
+            }
+        }
 
         Context context = Context.current().withValue(SophieSecurityContext.PRINCIPAL, principal);
         if (rawToken != null) {

@@ -5,6 +5,8 @@ import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 import org.sophie.security.comparison.IdentityComparisonLogger;
 import org.sophie.security.grpc.JwtServerInterceptor;
 import org.sophie.security.jwt.JwtVerifier;
+import org.sophie.security.policy.PrincipalTierPolicy;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -34,13 +36,20 @@ public class SophieSecurityServerAutoConfiguration {
         return new JwtVerifier(jwkSetUri, issuerUri);
     }
 
+    /**
+     * {@code tierPolicyProvider} is optional: a service that hasn't defined a {@link PrincipalTierPolicy}
+     * bean gets {@code null} here, and every RPC then falls back to {@link PrincipalTierPolicy#DEFAULT_TIER}
+     * inside the interceptor — enforcing still works, just without any allowlisted exceptions.
+     */
     @Bean
     @GrpcGlobalServerInterceptor
     @Order(Ordered.HIGHEST_PRECEDENCE + 10)
     public ServerInterceptor sophieJwtServerInterceptor(
             JwtVerifier jwtVerifier,
             SophieSecurityProperties props,
-            IdentityComparisonLogger comparisonLogger) {
-        return new JwtServerInterceptor(jwtVerifier, props.getInternal().getSharedSecret(), comparisonLogger);
+            IdentityComparisonLogger comparisonLogger,
+            ObjectProvider<PrincipalTierPolicy> tierPolicyProvider) {
+        return new JwtServerInterceptor(jwtVerifier, props.getInternal().getSharedSecret(), comparisonLogger,
+                props.isEnforce(), tierPolicyProvider.getIfAvailable());
     }
 }

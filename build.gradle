@@ -6,7 +6,7 @@ plugins {
 
 group = 'org.sophie'
 // Same DECLARED_VERSION/publish convention as sophie-protos: bump this, tag v<version>, push the tag.
-ext.DECLARED_VERSION = '0.2.0'
+ext.DECLARED_VERSION = '0.2.2'
 version = project.findProperty('releaseVersion') ?: DECLARED_VERSION
 description = 'sophie-common-security — shared JWT/JWKS caller verification for Sophie-KC gRPC services'
 

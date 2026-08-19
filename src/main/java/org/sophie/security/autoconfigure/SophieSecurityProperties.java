@@ -10,6 +10,12 @@ public class SophieSecurityProperties {
     /** This service's own name, asserted as the caller identity on outbound internal-secret calls. */
     private String serviceName;
 
+    /** When true, {@link org.sophie.security.grpc.JwtServerInterceptor} rejects unauthenticated
+     *  calls and calls below an RPC's required {@link org.sophie.security.policy.PrincipalTier}
+     *  instead of just logging the comparison. Default false so a service can be built with the
+     *  updated library without changing behavior until explicitly flipped. */
+    private boolean enforce = false;
+
     private Internal internal = new Internal();
 
     @Data
