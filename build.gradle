@@ -1,0 +1,82 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'maven-publish'
+}
+
+group = 'org.sophie'
+// Same DECLARED_VERSION/publish convention as sophie-protos: bump this, tag v<version>, push the tag.
+ext.DECLARED_VERSION = '0.1.0'
+version = project.findProperty('releaseVersion') ?: DECLARED_VERSION
+description = 'sophie-common-security — shared JWT/JWKS caller verification for Sophie-KC gRPC services'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Aligns transitively-managed versions (e.g. slf4j) with what every consuming service already runs,
+// without applying the Boot application plugin itself — this is a library, not a bootable app.
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.boot:spring-boot-dependencies:4.1.0"
+    }
+}
+
+dependencies {
+    // net.devh and grpc-api are provided by every consumer already (net.devh:grpc-*-spring-boot-starter
+    // is a platform-wide convention; grpc-api arrives transitively via sophie-protos' own `api` exports).
+    // compileOnly here so this library never forces the server-side starter onto client-only consumers
+    // (api-gateway, websocket-service) — @ConditionalOnClass in the autoconfigure package does the rest.
+    compileOnly 'io.grpc:grpc-api:1.68.0'
+    compileOnly 'net.devh:grpc-spring-boot-starter:3.1.0.RELEASE'
+    compileOnly 'org.springframework.boot:spring-boot-autoconfigure'
+    compileOnly 'org.springframework:spring-context'
+
+    // JWT signature verification against Keycloak's JWKS, built directly on Nimbus rather than Spring
+    // Security's NimbusJwtDecoder — this keeps spring-security-web/config off every consumer's classpath
+    // entirely, so adding this library can never activate Spring Boot's default HTTP security lockdown
+    // on the services that run webmvc solely for actuator health checks. `implementation`, not
+    // compileOnly: none of the 10 services already depend on this, so it must reach their runtime
+    // classpath via this library.
+    implementation 'com.nimbusds:nimbus-jose-jwt:9.37.3'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.register('printVersion') {
+    doLast { println DECLARED_VERSION }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        // GitHub Packages Maven registries are per-repository, not per-org — this needs its own maven
+        // block distinct from sophie-protos' (consumers add a second repositories{} entry for this URL).
+        maven {
+            name = 'GitHubPackages'
+            url = uri("https://maven.pkg.github.com/${project.findProperty('gpr.owner') ?: 'Sophie-KC'}/sophie-common-security")
+            credentials {
+                username = project.findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+                password = project.findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+            }
+        }
+    }
+}

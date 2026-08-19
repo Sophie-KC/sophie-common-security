@@ -1,0 +1,3 @@
+org.sophie.security.autoconfigure.SophieSecurityAutoConfiguration
+org.sophie.security.autoconfigure.SophieSecurityServerAutoConfiguration
+org.sophie.security.autoconfigure.SophieSecurityClientAutoConfiguration
