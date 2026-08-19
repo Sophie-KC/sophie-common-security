@@ -12,11 +12,12 @@ import org.sophie.security.context.SophieSecurityContext;
 /**
  * Forwards identity on every outbound call, broadly — not hand-wired per call site — so no internal
  * hop can silently regress to sending nothing. Priority: the original raw JWT if this call thread has
- * one (so a downstream signature check still succeeds against the same JWKS) &gt; the inbound
- * {@code x-user-id}/{@code x-org-role} this service itself received &gt; this service's own shared
- * secret, asserting a {@code ServicePrincipal} for calls with no user context at all — background
- * jobs, queue consumers, or callers with no gRPC {@link io.grpc.Context} propagated to this thread
- * (e.g. websocket-service's WS-handshake-authenticated handlers).
+ * one (so a downstream signature check still succeeds against the same JWKS) &gt; an explicitly
+ * asserted user identity this service resolved out-of-band (see {@link
+ * org.sophie.security.context.SophieSecurityContext#withAssertedUser}) &gt; the inbound {@code
+ * x-user-id}/{@code x-org-role} this service itself received &gt; this service's own shared secret
+ * alone, asserting a bare {@code ServicePrincipal} for calls with no user context at all — background
+ * jobs, queue consumers, or callers with no gRPC {@link io.grpc.Context} propagated to this thread.
  */
 public class IdentityForwardingClientInterceptor implements ClientInterceptor {
 
@@ -30,6 +31,10 @@ public class IdentityForwardingClientInterceptor implements ClientInterceptor {
             Metadata.Key.of("x-internal-service-secret", Metadata.ASCII_STRING_MARSHALLER);
     static final Metadata.Key<String> INTERNAL_SERVICE_NAME =
             Metadata.Key.of("x-internal-service-name", Metadata.ASCII_STRING_MARSHALLER);
+    static final Metadata.Key<String> ASSERTED_USER_ID =
+            Metadata.Key.of("x-asserted-internal-user-id", Metadata.ASCII_STRING_MARSHALLER);
+    static final Metadata.Key<String> ASSERTED_KEYCLOAK_SUB =
+            Metadata.Key.of("x-asserted-keycloak-sub", Metadata.ASCII_STRING_MARSHALLER);
 
     private final String serviceName;
     private final String sharedSecret;
@@ -46,11 +51,23 @@ public class IdentityForwardingClientInterceptor implements ClientInterceptor {
             @Override
             public void start(Listener<RespT> responseListener, Metadata headers) {
                 String rawToken = SophieSecurityContext.RAW_TOKEN.get();
+                String assertedUserId = SophieSecurityContext.ASSERTED_INTERNAL_USER_ID.get();
                 String forwardedUserId = SophieSecurityContext.FORWARDED_USER_ID.get();
                 String forwardedOrgRole = SophieSecurityContext.FORWARDED_ORG_ROLE.get();
 
                 if (rawToken != null && !rawToken.isBlank()) {
                     headers.put(AUTHORIZATION, "Bearer " + rawToken);
+                } else if (assertedUserId != null && !assertedUserId.isBlank()
+                        && sharedSecret != null && !sharedSecret.isBlank()) {
+                    // The asserted identity rides inside the shared-secret-authenticated envelope — it
+                    // is only meaningful alongside proof this is a genuine internal service, never alone.
+                    headers.put(INTERNAL_SECRET, sharedSecret);
+                    headers.put(INTERNAL_SERVICE_NAME, serviceName);
+                    headers.put(ASSERTED_USER_ID, assertedUserId);
+                    String assertedSub = SophieSecurityContext.ASSERTED_KEYCLOAK_SUB.get();
+                    if (assertedSub != null && !assertedSub.isBlank()) {
+                        headers.put(ASSERTED_KEYCLOAK_SUB, assertedSub);
+                    }
                 } else if (forwardedUserId != null && !forwardedUserId.isBlank()) {
                     headers.put(USER_ID, forwardedUserId);
                     if (forwardedOrgRole != null && !forwardedOrgRole.isBlank()) {

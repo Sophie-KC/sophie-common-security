@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.sophie.security.comparison.IdentityComparisonLogger;
 import org.sophie.security.context.SophieSecurityContext;
 import org.sophie.security.jwt.JwtVerifier;
+import org.sophie.security.principal.AssertedUserPrincipal;
 import org.sophie.security.principal.ServicePrincipal;
 import org.sophie.security.principal.SophiePrincipal;
 import org.sophie.security.principal.UserPrincipal;
@@ -39,6 +40,10 @@ public class JwtServerInterceptor implements ServerInterceptor {
             Metadata.Key.of("x-user-id", Metadata.ASCII_STRING_MARSHALLER);
     static final Metadata.Key<String> ORG_ROLE =
             Metadata.Key.of("x-org-role", Metadata.ASCII_STRING_MARSHALLER);
+    static final Metadata.Key<String> ASSERTED_USER_ID =
+            Metadata.Key.of("x-asserted-internal-user-id", Metadata.ASCII_STRING_MARSHALLER);
+    static final Metadata.Key<String> ASSERTED_KEYCLOAK_SUB =
+            Metadata.Key.of("x-asserted-keycloak-sub", Metadata.ASCII_STRING_MARSHALLER);
 
     private final JwtVerifier jwtVerifier;
     private final String expectedInternalSecret;
@@ -75,7 +80,15 @@ public class JwtServerInterceptor implements ServerInterceptor {
             if (secret != null && expectedInternalSecret != null && !expectedInternalSecret.isBlank()
                     && constantTimeEquals(secret, expectedInternalSecret)) {
                 String serviceName = headers.get(INTERNAL_SERVICE_NAME);
-                principal = new ServicePrincipal(serviceName != null ? serviceName : "unknown");
+                String assertedUserId = headers.get(ASSERTED_USER_ID);
+                if (assertedUserId != null && !assertedUserId.isBlank()) {
+                    principal = new AssertedUserPrincipal(
+                            serviceName != null ? serviceName : "unknown",
+                            headers.get(ASSERTED_KEYCLOAK_SUB),
+                            assertedUserId);
+                } else {
+                    principal = new ServicePrincipal(serviceName != null ? serviceName : "unknown");
+                }
             } else if (secret != null) {
                 log.warn("Internal service secret mismatch on {}", methodName);
             }
@@ -95,6 +108,12 @@ public class JwtServerInterceptor implements ServerInterceptor {
         }
         if (suppliedOrgRole != null) {
             context = context.withValue(SophieSecurityContext.FORWARDED_ORG_ROLE, suppliedOrgRole);
+        }
+        if (principal instanceof AssertedUserPrincipal aup) {
+            context = context.withValue(SophieSecurityContext.ASSERTED_INTERNAL_USER_ID, aup.internalUserId());
+            if (aup.keycloakSub() != null) {
+                context = context.withValue(SophieSecurityContext.ASSERTED_KEYCLOAK_SUB, aup.keycloakSub());
+            }
         }
 
         return Contexts.interceptCall(context, call, headers, next);
