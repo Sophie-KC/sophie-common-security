@@ -49,6 +49,10 @@ dependencies {
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
+    // grpc-api/net.devh are compileOnly for main (see above) but this library's own tests exercise the
+    // interceptors directly, so they need it on the test classpath.
+    testImplementation 'io.grpc:grpc-api:1.68.0'
+    testImplementation 'org.slf4j:slf4j-api'
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
