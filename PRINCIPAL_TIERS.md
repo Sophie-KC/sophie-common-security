@@ -113,7 +113,7 @@ Default **UP** for all messaging/reactions/pins/read-state. Never-assert excepti
 | InitiateInstallation / InitiateGitLabOAuth | UP | Org admin only. |
 | ConfirmGitLabGroupSelection | **UP** | Org admin re-check + stores real OAuth tokens — high-value target, must be genuine user even though it re-checks server-side. |
 
-## file_service.proto (5 RPCs) — entire service is internal-only by design
+## file_service.proto (8 RPCs) — entire service is internal-only by design
 
 Proto's own service comment: "gRPC-only, internal service-to-service — there is NO
 caller-identity/permission check here... the calling service is responsible for having verified
@@ -126,6 +126,9 @@ the user may upload/attach/download before calling."
 | GetFile | **SP** | No org/identity scoping — metadata-only, but must never be Gateway-reachable directly. |
 | AttachFileReference | **SP** | Caller has already authorized the link. |
 | GetDownloadUrl | **SP** | The actual content-access gate has zero checks of its own — relies entirely on Chat/Doc's per-message/per-page `GetAttachmentDownloadUrl` never being bypassed. Must never be Gateway-reachable directly. |
+| ReplaceReferences | **SP** | Wholesale reference-set replace for one owner. Caller (doc-service) has already resolved page access before calling; only does a light cross-org check against `org_id` when given. |
+| RevokeOwner | **SP** | Convenience for `ReplaceReferences` with an empty file set. |
+| GetReferenceCount | **SP** | Debug/admin only — not on the GC sweeper's hot path (which re-checks refcount inside its own delete transaction). Must never be Gateway-reachable directly. |
 
 ## notification_service.proto (7 RPCs)
 
