@@ -55,14 +55,17 @@ assert its way into a privileged action.
 | ToggleAppFavorite | UP | User-owned preference. |
 | GetAppIconDownloadUrl | UP | |
 
-## task_service.proto (56 RPCs)
+## task_service.proto (59 RPCs)
 
 Default **UP** for all — projects, task types, workflow, boards, labels, tasks, comments,
 sprints, doc-links. Explicit exceptions:
 
 | RPC | Tier | Why |
 |---|---|---|
-| ResolveTaskReferenceInternal | **SP** | Brief's original allowlist entry (vcs→task). Confirmed correct — proto comment: "no requested_by, no access check... reachable only from other backend services." |
+| ResolveTaskReferenceInternal | **SP** | Brief's original allowlist entry (integration→task). Confirmed correct — proto comment: "no requested_by, no access check... reachable only from other backend services." |
+| ListVcsReferencesForTask | UP | VCS references moved here from vcs_service.proto's ListReferencesForEntity as part of the vcs-service -> integration-service split — unlike the old RPC, this one does its own project-access check (same load GetTask does), so it's genuine UP, not an assertion. |
+| ProcessVcsWebhookEvent | **SP** | New with the split — integration-service calls this after verifying a GitHub/GitLab webhook signature/token and resolving the connection; no user in context, same trust tier as ResolveTaskReferenceInternal. |
+| DeleteVcsReferencesForConnection | **SP** | New with the split — integration-service calls this from its DisconnectIntegration flow to clean up references that now live in a different service's DB. |
 | CreateTaskType / UpdateTaskType / DeleteTaskType | UP | Org-admin-gated catalog changes. |
 | CreateTask | UP | Note: optional `reporter_id` can currently be set by the caller to attribute a task to someone else — flagged for the handler-level fix in Step 3, not a tier change. |
 | BatchGetTaskSummaries | UP | "No per-task filtering beyond normal authenticated caller" per comment — confirm this isn't over-broad once enforced; keep at UP, don't downgrade. |
@@ -103,13 +106,18 @@ Default **UP** for all messaging/reactions/pins/read-state. Never-assert excepti
 | SearchMessages | UP | Live membership-filtered per comment — good, keep UP. |
 | SearchPages | UP (verify) | Downstream calls Doc Service's `FilterAccessiblePages` — same identity-forwarding concern as above; confirm Search forwards the real user, doesn't assert its own identity. |
 
-## vcs_service.proto (6 RPCs)
+## integration_service.proto (5 RPCs) — renamed from vcs_service.proto
+
+Connections only now (GitHub/GitLab today; Google/Microsoft calendar sync planned) — VCS reference
+reading moved to task_service.proto's ListVcsReferencesForTask (see above) as part of the
+vcs-service -> integration-service split. No AUP/SP entries left here at all — every remaining RPC
+is a genuine org-admin-gated UP call, so this service currently defines no `PrincipalTierPolicy`
+override (default UP for everything).
 
 | RPC | Tier | Why |
 |---|---|---|
-| ListVcsConnections | UP | Org admin only, never returns tokens. |
-| DisconnectVcs | UP | Org admin only, destructive. |
-| ListReferencesForEntity | **AUP/SP** | Proto comment: caller (Task Service) is trusted to have already validated access; `requested_by` is carried but never checked. This is the one RPC in the codebase that already, explicitly, treats an assertion as sufficient — keep it that way but make it a deliberate `PrincipalTierPolicy` entry rather than an accident of missing enforcement. |
+| ListConnections | UP | Org admin only, never returns tokens. |
+| DisconnectIntegration | UP | Org admin only, destructive. |
 | InitiateInstallation / InitiateGitLabOAuth | UP | Org admin only. |
 | ConfirmGitLabGroupSelection | **UP** | Org admin re-check + stores real OAuth tokens — high-value target, must be genuine user even though it re-checks server-side. |
 
@@ -143,13 +151,15 @@ the user may upload/attach/download before calling."
 
 ## Summary — ServicePrincipal allowlist (revised; supersedes the brief's list of 3)
 
-The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 18:
+The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 20 (was 18 pre-split;
+the vcs-service -> integration-service split removed the one AUP entry and added two genuine SP
+ones):
 
 - org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`
-- task: `ResolveTaskReferenceInternal`
+- task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
-- vcs: `ListReferencesForEntity` (AUP, not SP — carries an unused identity field)
 - file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
 
 Everything else in the platform (~150 RPCs) requires genuine `UserPrincipal`. Nothing else is
-allowlisted for a weaker tier.
+allowlisted for a weaker tier. Note: integration-service itself has zero SP/AUP entries — unlike
+before the split, it defines no `PrincipalTierPolicy` override at all.
