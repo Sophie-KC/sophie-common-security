@@ -106,20 +106,34 @@ Default **UP** for all messaging/reactions/pins/read-state. Never-assert excepti
 | SearchMessages | UP | Live membership-filtered per comment — good, keep UP. |
 | SearchPages | UP (verify) | Downstream calls Doc Service's `FilterAccessiblePages` — same identity-forwarding concern as above; confirm Search forwards the real user, doesn't assert its own identity. |
 
-## integration_service.proto (5 RPCs) — renamed from vcs_service.proto
+## integration_service.proto (6 RPCs) — renamed from vcs_service.proto
 
-Connections only now (GitHub/GitLab today; Google/Microsoft calendar sync planned) — VCS reference
-reading moved to task_service.proto's ListVcsReferencesForTask (see above) as part of the
-vcs-service -> integration-service split. No AUP/SP entries left here at all — every remaining RPC
-is a genuine org-admin-gated UP call, so this service currently defines no `PrincipalTierPolicy`
-override (default UP for everything).
+Connections only now (GitHub/GitLab, Google today) — VCS reference reading moved to
+task_service.proto's ListVcsReferencesForTask (see above) as part of the vcs-service ->
+integration-service split. GitHub/GitLab stay org-admin-gated UP calls; Google is self-service
+(personal, not org-wide — see GoogleOAuthService's class doc) and requires only org membership.
+`GetAccessToken` is this service's first-ever SP entry, added when calendar-service's Google sync
+needed to call the Calendar API directly — defines a `PrincipalTierPolicy`
+(`IntegrationPrincipalTierPolicy`) for the first time.
 
 | RPC | Tier | Why |
 |---|---|---|
-| ListConnections | UP | Org admin only, never returns tokens. |
-| DisconnectIntegration | UP | Org admin only, destructive. |
-| InitiateInstallation / InitiateGitLabOAuth | UP | Org admin only. |
+| ListConnections | UP | Admin sees every connection; non-admin sees only their own self-service (Google) connections. Never returns tokens. |
+| DisconnectIntegration | UP | Admin: any connection, destructive. Non-admin: only their own Google connection. |
+| InitiateInstallation / InitiateGitLabOAuth | UP | Org admin only — GitHub/GitLab are org-wide. |
 | ConfirmGitLabGroupSelection | **UP** | Org admin re-check + stores real OAuth tokens — high-value target, must be genuine user even though it re-checks server-side. |
+| InitiateGoogleOAuth | **UP** | Self-service — requires org membership, not admin (checked via `IsOrgMember`, not `IsOrgAdmin`). Google's own OAuth consent requires the actual account holder to authenticate, so this can never be admin-initiated-on-behalf-of-another-user. |
+| GetAccessToken | **SP** | No `requested_by`, no access check — internal-only, reachable only from calendar-service, which has already verified via `ListConnections` that the caller owns the `connection_id` before calling this. |
+
+## calendar_service.proto — predates this audit doc except for one new SP entry
+
+The other 13 RPCs on this service default to UP and were not part of the original phase-2 audit
+this document captures — not reviewed here. Documenting only the one RPC added alongside
+integration-service's `GetAccessToken` above, which needed a symmetric internal-only cleanup path:
+
+| RPC | Tier | Why |
+|---|---|---|
+| DeleteExternalCalendarDataForConnection | **SP** | Called by integration-service's `DisconnectIntegration` flow to clean up synced Google Calendar data — same pattern as task_service.proto's `DeleteVcsReferencesForConnection`. No user in context. |
 
 ## file_service.proto (8 RPCs) — entire service is internal-only by design
 
@@ -138,6 +152,21 @@ the user may upload/attach/download before calling."
 | RevokeOwner | **SP** | Convenience for `ReplaceReferences` with an empty file set. |
 | GetReferenceCount | **SP** | Debug/admin only — not on the GC sweeper's hot path (which re-checks refcount inside its own delete transaction). Must never be Gateway-reachable directly. |
 
+## subscription_service.proto (6 RPCs, Phase 1) — entire service is internal-only by design, like File Service
+
+Every RPC is called by another backend service (org-service's signup saga; eventually file/doc/task/
+chat's own entitlement checks) — never directly by api-gateway on a user's behalf, since the Gateway
+REST surface (design doc §11) isn't built yet. Blanket **SP**, same reasoning as `file_service.proto`.
+
+| RPC | Tier | Why |
+|---|---|---|
+| GetEntitlements | **SP** | The access-check primitive other services gate on — same trust level as org-service's `IsOrgMember`. |
+| CheckEntitlement | **SP** | Same. |
+| CheckSeatAvailable | **SP** | Informational read only (real enforcement is the caller's own transactional count) — same tier regardless. |
+| GetSubscription | **SP** | No Gateway-facing caller yet. Reclassify when `/api/v1/subscription` (design §11) is built — a real user would then be behind the call. |
+| CreateFreeSubscription | **SP** | Called from org-service's signup saga, itself already past its own privilege checks; no user context to assert, same reasoning as org-service's `SignUp`. |
+| ListPlans | **SP** | Public catalog data today; same "no Gateway caller yet" reasoning as `GetSubscription`. |
+
 ## notification_service.proto (7 RPCs)
 
 | RPC | Tier | Why |
@@ -151,15 +180,20 @@ the user may upload/attach/download before calling."
 
 ## Summary — ServicePrincipal allowlist (revised; supersedes the brief's list of 3)
 
-The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 20 (was 18 pre-split;
+The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 22 (was 18 pre-split;
 the vcs-service -> integration-service split removed the one AUP entry and added two genuine SP
-ones):
+ones; the calendar-integration work added two more — integration-service's `GetAccessToken` and
+calendar-service's `DeleteExternalCalendarDataForConnection`):
 
 - org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
 - file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
+- integration: `GetAccessToken`
+- calendar: `DeleteExternalCalendarDataForConnection`
+- subscription-service: all 6 Phase-1 RPCs (`GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `GetSubscription`, `CreateFreeSubscription`, `ListPlans`)
 
 Everything else in the platform (~150 RPCs) requires genuine `UserPrincipal`. Nothing else is
-allowlisted for a weaker tier. Note: integration-service itself has zero SP/AUP entries — unlike
-before the split, it defines no `PrincipalTierPolicy` override at all.
+allowlisted for a weaker tier. integration-service and calendar-service each define exactly one
+`PrincipalTierPolicy` entry (`GetAccessToken` and `DeleteExternalCalendarDataForConnection`
+respectively) — both previously had none.
