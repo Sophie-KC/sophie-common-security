@@ -16,6 +16,31 @@ assert its way into a privileged action.
 
 ---
 
+## New service checklist
+
+subscription-service lost real time in its first phase to this: every RPC silently defaulted to
+requiring **UP** (no `PrincipalTierPolicy` bean registered at all), so its first caller (org-service,
+service-to-service, no forwarded user) got rejected `PERMISSION_DENIED: <method> requires USER,
+caller presented SERVICE` with nothing pointing at the cause. A brand-new gRPC service needs, before
+its first real caller:
+
+1. A `<Service>PrincipalTierPolicy` `@Configuration` class registering a `PrincipalTierPolicy` bean —
+   even if every RPC ends up **UP**, register an empty/explicit policy rather than none, so "no policy
+   configured yet" and "deliberately all-UP" aren't the same silent state.
+2. An entry in this file's per-service table for every RPC that ISN'T the **UP** default, with a `Why`
+   — matching the existing per-service sections' shape.
+3. If the entry is **SP**, add it to the Summary allowlist below too. The two must never diverge.
+4. Think about which tier each of the service's own OUTBOUND callers will present. A service that's
+   internal-only for now (no Gateway-forwarded caller yet, e.g. subscription-service in Phase 1) can
+   reasonably blanket-SP everything, matching `FilePrincipalTierPolicy`'s `return methodName ->
+   PrincipalTier.SERVICE;` — but say so in the class javadoc, and note what has to change (which RPCs
+   need reclassifying) once a Gateway REST surface for it exists.
+
+billing-service is next up to hit this (subscriptions Phase 2 §4.1) — do steps 1–4 at scaffold time,
+not after the first `PERMISSION_DENIED`.
+
+---
+
 ## org_service.proto (41 RPCs) — highest risk, owns all role/permission/membership state
 
 | RPC | Tier | Why |
@@ -37,6 +62,7 @@ assert its way into a privileged action.
 | RoleExists | **SP** | Trusted-internal existence check. |
 | BatchGetUsers | **SP** | Cross-tenant identity lookup, no org-scoping — same trust level as IsOrgMember. |
 | ListMyOrganizations | UP | Caller's own org memberships. |
+| ListOrganizations | **SP** | Staff-tier, every org platform-wide (not the caller's own) — added for subscription-service's SubscriptionBackfillRunner (subscriptions Phase 2 §0.2). No identity field, same trust level as IsOrgMember/BatchGetUsers. |
 | UpdateOrganization | UP | Org Admin only. |
 | UpdateOrganizationStatus | **UP** | ARCHIVED = effective tenant deletion. Never an assertion. |
 | GetMyOrganizationBySubdomain | UP | |
@@ -185,7 +211,7 @@ the vcs-service -> integration-service split removed the one AUP entry and added
 ones; the calendar-integration work added two more — integration-service's `GetAccessToken` and
 calendar-service's `DeleteExternalCalendarDataForConnection`):
 
-- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`
+- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
 - file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
