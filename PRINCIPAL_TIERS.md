@@ -63,6 +63,7 @@ not after the first `PERMISSION_DENIED`.
 | BatchGetUsers | **SP** | Cross-tenant identity lookup, no org-scoping — same trust level as IsOrgMember. |
 | ListMyOrganizations | UP | Caller's own org memberships. |
 | ListOrganizations | **SP** | Staff-tier, every org platform-wide (not the caller's own) — added for subscription-service's SubscriptionBackfillRunner (subscriptions Phase 2 §0.2). No identity field, same trust level as IsOrgMember/BatchGetUsers. |
+| GetOrgSeatCount | **SP** | Trusted-internal member count — added for subscription-service's ChangePlan (subscriptions Phase 2b §2), so a plan change can never set seats below the org's actual current member count. No identity field, same trust level as IsOrgMember. |
 | UpdateOrganization | UP | Org Admin only. |
 | UpdateOrganizationStatus | **UP** | ARCHIVED = effective tenant deletion. Never an assertion. |
 | GetMyOrganizationBySubdomain | UP | |
@@ -211,7 +212,7 @@ the vcs-service -> integration-service split removed the one AUP entry and added
 ones; the calendar-integration work added two more — integration-service's `GetAccessToken` and
 calendar-service's `DeleteExternalCalendarDataForConnection`):
 
-- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`
+- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
 - file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
