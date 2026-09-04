@@ -35,9 +35,19 @@ its first real caller:
    reasonably blanket-SP everything, matching `FilePrincipalTierPolicy`'s `return methodName ->
    PrincipalTier.SERVICE;` — but say so in the class javadoc, and note what has to change (which RPCs
    need reclassifying) once a Gateway REST surface for it exists.
+5. **This checklist covers new *services*. The gap that actually drew blood (Phase 2c) was a new
+   *caller*:** subscription-service's `GrpcBillingClient` started calling billing-service's existing
+   `ListInvoices`/`GetBillingAccount` — both already-shipped, already-UP-tier RPCs — and nothing
+   caught that those RPCs now needed to accept a SERVICE-tier caller too, because tier decisions get
+   made once, at the RPC's OWN scaffold time, and never revisited. **When a service starts calling an
+   RPC it has not called before, re-check that RPC's tier against the new caller — same as step 4, but
+   run backwards, from the callee's table entry rather than the new caller's own policy class.** With
+   enforcement on this fails closed (`PERMISSION_DENIED`, loud), but a caller with its own try/catch
+   around the RPC (like `GrpcBillingClient`'s intentional fail-open-to-a-default) can swallow that into
+   a silently wrong default instead — exactly what happened here.
 
-billing-service is next up to hit this (subscriptions Phase 2 §4.1) — do steps 1–4 at scaffold time,
-not after the first `PERMISSION_DENIED`.
+billing-service was the service that hit steps 1–4 (subscriptions Phase 2 §4.1); the ListInvoices/
+GetBillingAccount tier gap above is the worked example for step 5.
 
 ---
 
