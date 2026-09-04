@@ -189,20 +189,26 @@ the user may upload/attach/download before calling."
 | RevokeOwner | **SP** | Convenience for `ReplaceReferences` with an empty file set. |
 | GetReferenceCount | **SP** | Debug/admin only — not on the GC sweeper's hot path (which re-checks refcount inside its own delete transaction). Must never be Gateway-reachable directly. |
 
-## subscription_service.proto (6 RPCs, Phase 1) — entire service is internal-only by design, like File Service
+## subscription_service.proto — SP for the genuinely internal-only RPCs, UP for everything the Gateway now calls
 
-Every RPC is called by another backend service (org-service's signup saga; eventually file/doc/task/
-chat's own entitlement checks) — never directly by api-gateway on a user's behalf, since the Gateway
-REST surface (design doc §11) isn't built yet. Blanket **SP**, same reasoning as `file_service.proto`.
+**Phase 3 §4 update:** the Gateway REST surface (design doc §11, `GET /api/v1/subscription` etc.) is now
+built — `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/
+`ResumeSubscription` all moved from the old blanket-SP scaffold-time policy to the genuine UP default,
+exactly as this table's own predecessor entries said to do once this happened (checklist item 5:
+reclassify on a new caller, not just at scaffold time). Confirmed before tightening: no internal
+service calls any of these six — the only internal caller anywhere in the monorepo touching
+`SubscriptionServiceGrpc` is org-service's signup saga, and only for `CreateFreeSubscription`.
 
 | RPC | Tier | Why |
 |---|---|---|
-| GetEntitlements | **SP** | The access-check primitive other services gate on — same trust level as org-service's `IsOrgMember`. |
+| GetEntitlements | **SP** | The access-check primitive other services gate on via the shared `sophie-entitlements` client, authenticated with the internal shared secret only — never a forwarded user JWT, Gateway REST surface or not. Same trust level as org-service's `IsOrgMember`. |
 | CheckEntitlement | **SP** | Same. |
 | CheckSeatAvailable | **SP** | Informational read only (real enforcement is the caller's own transactional count) — same tier regardless. |
-| GetSubscription | **SP** | No Gateway-facing caller yet. Reclassify when `/api/v1/subscription` (design §11) is built — a real user would then be behind the call. |
-| CreateFreeSubscription | **SP** | Called from org-service's signup saga, itself already past its own privilege checks; no user context to assert, same reasoning as org-service's `SignUp`. |
-| ListPlans | **SP** | Public catalog data today; same "no Gateway caller yet" reasoning as `GetSubscription`. |
+| CreateFreeSubscription | **SP** | Called from org-service's signup saga, itself already past its own privilege checks, before any session exists — no user JWT to forward. Same reasoning as org-service's `SignUp`. |
+| GetSubscription | UP | `GET /api/v1/subscription` (api-gateway's `SubscriptionController`) now calls this on a real, authenticated org member's behalf. |
+| ListPlans | UP | `GET /api/v1/subscription/plans` — same caller. Public catalog data, but now genuinely reachable only by an authenticated user rather than "no caller at all yet." |
+| PreviewPlanChange / ChangePlan | UP | `POST /api/v1/subscription/preview` / `/change` — same caller, gated further in the Gateway on the `subscription.plan.change` permission key (a tier check alone can't express "and specifically has this permission"). |
+| CancelSubscription / ResumeSubscription | UP | `POST /api/v1/subscription/cancel` / `/resume` — same caller, Gateway-gated to Org Admin only. Not yet implemented server-side (falls through to UNIMPLEMENTED) — the tier is set correctly regardless of that gap so nothing needs revisiting when the implementation lands. |
 
 ## billing_service.proto (Phase 2b/2c)
 
@@ -220,8 +226,8 @@ hard-to-notice failure this checklist exists to catch. Caught and fixed while wi
 | RPC | Tier | Why |
 |---|---|---|
 | CreateInvoice | **SP** | Internal only — called from subscription-service's outbox relay (`subscription.invoice_requested`) or a future synchronous call, never on a user's behalf. |
-| ListInvoices | **SP** | subscription-service's `PreviewPlanChange` reads this today (proration's amount-paid lookup) as an internal caller. Reclassify (tighten) once a Gateway REST surface forwards a real customer identity to it. |
-| GetBillingAccount | **SP** | Same caller, same reasoning — `PreviewPlanChange`'s VAT-payer estimate. |
+| ListInvoices | **SP** | subscription-service's `PreviewPlanChange` reads this today (proration's amount-paid lookup) as an internal caller. **Phase 3 §4 update:** api-gateway's `BillingController` now also calls this on a real customer's behalf (`GET /api/v1/billing/invoices`) — deliberately left at SP rather than tightened, since doing so would break `PreviewPlanChange`'s own still-live internal call; a UP-tier caller passes an SP-required check trivially, so the Gateway's real customer reads are unaffected, and the actual `billing.view` authorization check now lives in `BillingController` itself. |
+| GetBillingAccount | **SP** | Same caller, same reasoning — `PreviewPlanChange`'s VAT-payer estimate. Same Phase 3 §4 update and same reason for staying SP: `GET /api/v1/billing/account` now calls it too, gated by `billing.view` in the Gateway. |
 | UpsertBillingAccount / GetInvoice / RenderInvoicePdf | UP | No internal caller today; customer-facing once the Gateway exists. |
 | MarkPaid / VoidInvoice | UP | "Staff-tier" by Phase 2b §3's own description, but there is no dedicated staff `PrincipalTier` — staff present real Keycloak sessions, so the tier is still UP. Which permission a UP-tier caller needs to reach these is an authorization question for the still-open platform staff identity model (subscriptions Phase 2c §4), not enforced yet. |
 
@@ -254,7 +260,7 @@ existing internal calls were found to need them too):
 - file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
 - integration: `GetAccessToken`
 - calendar: `DeleteExternalCalendarDataForConnection`
-- subscription-service: all 6 Phase-1 RPCs (`GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `GetSubscription`, `CreateFreeSubscription`, `ListPlans`)
+- subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription` (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them)
 - billing-service: `CreateInvoice`, `ListInvoices`, `GetBillingAccount`
 
 Everything else in the platform (~150 RPCs) requires genuine `UserPrincipal`. Nothing else is
