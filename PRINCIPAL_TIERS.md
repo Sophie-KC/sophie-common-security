@@ -194,6 +194,25 @@ REST surface (design doc §11) isn't built yet. Blanket **SP**, same reasoning a
 | CreateFreeSubscription | **SP** | Called from org-service's signup saga, itself already past its own privilege checks; no user context to assert, same reasoning as org-service's `SignUp`. |
 | ListPlans | **SP** | Public catalog data today; same "no Gateway caller yet" reasoning as `GetSubscription`. |
 
+## billing_service.proto (Phase 2b/2c) — first service with real UP-tier callers from day one, not blanket-SP
+
+Unlike subscription-service/file-service, billing-service has three distinct kinds of caller from the
+start (Phase 2b §3): subscription-service calling `CreateInvoice` internally, the (not-yet-built)
+Gateway forwarding a real customer's own reads, and platform staff performing admin writes. Only the
+first has a genuine internal-only caller today, so it is the sole SP exception; everything else
+defaults to **UP**, matching org-service's per-RPC-allowlist shape rather than file-service's blanket
+policy.
+
+| RPC | Tier | Why |
+|---|---|---|
+| CreateInvoice | **SP** | Internal only — called from subscription-service's outbox relay (`subscription.invoice_requested`) or a future synchronous call, never on a user's behalf. |
+| GetBillingAccount / UpsertBillingAccount | UP | Org's own billing contact/legal details — customer-facing once the Gateway exists. |
+| ListInvoices / GetInvoice / RenderInvoicePdf | UP | Customer reads their own org's invoices. |
+| MarkPaid / VoidInvoice | UP | "Staff-tier" by Phase 2b §3's own description, but there is no dedicated staff `PrincipalTier` — staff present real Keycloak sessions, so the tier is still UP. Which permission a UP-tier caller needs to reach these is an authorization question for the still-open platform staff identity model (subscriptions Phase 2c §4), not enforced yet. |
+
+`BillingAdminService` (contract reserved in the proto) has no entry — no server implementation exists
+yet, so no tier decision is due.
+
 ## notification_service.proto (7 RPCs)
 
 | RPC | Tier | Why |
@@ -207,10 +226,11 @@ REST surface (design doc §11) isn't built yet. Blanket **SP**, same reasoning a
 
 ## Summary — ServicePrincipal allowlist (revised; supersedes the brief's list of 3)
 
-The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 22 (was 18 pre-split;
+The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 23 (was 18 pre-split;
 the vcs-service -> integration-service split removed the one AUP entry and added two genuine SP
 ones; the calendar-integration work added two more — integration-service's `GetAccessToken` and
-calendar-service's `DeleteExternalCalendarDataForConnection`):
+calendar-service's `DeleteExternalCalendarDataForConnection`; billing-service's scaffold added one
+more, `CreateInvoice`):
 
 - org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
@@ -219,6 +239,7 @@ calendar-service's `DeleteExternalCalendarDataForConnection`):
 - integration: `GetAccessToken`
 - calendar: `DeleteExternalCalendarDataForConnection`
 - subscription-service: all 6 Phase-1 RPCs (`GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `GetSubscription`, `CreateFreeSubscription`, `ListPlans`)
+- billing-service: `CreateInvoice`
 
 Everything else in the platform (~150 RPCs) requires genuine `UserPrincipal`. Nothing else is
 allowlisted for a weaker tier. integration-service and calendar-service each define exactly one
