@@ -17,6 +17,17 @@ java {
 }
 
 repositories {
+    mavenLocal()
+    // AccessGuard's compileOnly dependency on Org Service's generated stub — same GitHub Packages
+    // registry every service already reads sophie-protos from.
+    maven {
+        name = 'GitHubPackagesProtos'
+        url = uri("https://maven.pkg.github.com/${project.findProperty('gpr.owner') ?: 'Sophie-KC'}/sophie-protos")
+        credentials {
+            username = project.findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+            password = project.findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+        }
+    }
     mavenCentral()
 }
 
@@ -37,6 +48,10 @@ dependencies {
     compileOnly 'net.devh:grpc-spring-boot-starter:3.1.0.RELEASE'
     compileOnly 'org.springframework.boot:spring-boot-autoconfigure'
     compileOnly 'org.springframework:spring-context'
+    // AccessGuard's constructor/bean-method signature references Org Service's generated stub type.
+    // compileOnly like the two dependencies above: every service this guard is wired into already
+    // depends on sophie-protos for other RPCs, so it must never force a transitive version onto them.
+    compileOnly 'org.sophie:sophie-protos:0.26.0'
 
     // JWT signature verification against Keycloak's JWKS, built directly on Nimbus rather than Spring
     // Security's NimbusJwtDecoder — this keeps spring-security-web/config off every consumer's classpath

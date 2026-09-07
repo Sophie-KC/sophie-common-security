@@ -48,6 +48,21 @@ public final class SophieSecurityContext {
         return null;
     }
 
+    /** Keycloak-side equivalent of {@link #currentInternalUserId()} — the identity {@link
+     *  org.sophie.security.access.AccessGuard} sends to Org Service's {@code ValidateSession}, which
+     *  is keyed by Keycloak sub (Org Service resolves the internal user id itself from it), not the
+     *  other way around. */
+    public static String currentKeycloakSub() {
+        SophiePrincipal principal = current();
+        if (principal instanceof UserPrincipal up) {
+            return up.keycloakSub();
+        }
+        if (principal instanceof AssertedUserPrincipal aup) {
+            return aup.keycloakSub();
+        }
+        return null;
+    }
+
     /**
      * A {@link Context} with the given out-of-band-resolved user identity attached, ready for {@code
      * .attach()} around outbound gRPC calls made from a thread with no inbound gRPC {@link Context} of
