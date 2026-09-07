@@ -14,6 +14,14 @@ Rule from the phase-2 brief: anything that grants privilege or crosses a tenant 
 require **UP**, never AUP — a compromised service holding the shared secret must not be able to
 assert its way into a privileged action.
 
+**One reviewed exception exists** (doc_service.proto's `GetCollabState`/`SaveCollabState`, added
+for websocket-service's realtime-collab path — see that section below): websocket-service's own
+callers authenticate via a single-use internal ticket redeemed at WebSocket handshake time, and
+this service never receives or holds a forwardable JWT for the connection's lifetime, so it
+structurally cannot present anything stronger than an assertion for these two RPCs. This is a
+narrow, load-bearing exception to the rule above, not a precedent for widening AUP's use
+elsewhere — any other privileged/tenant-crossing RPC still must require UP.
+
 ---
 
 ## New service checklist
@@ -74,6 +82,8 @@ GetBillingAccount tier gap above is the worked example for step 5.
 | ListMyOrganizations | UP | Caller's own org memberships. |
 | ListOrganizations | **SP** | Staff-tier, every org platform-wide (not the caller's own) — added for subscription-service's SubscriptionBackfillRunner (subscriptions Phase 2 §0.2). No identity field, same trust level as IsOrgMember/BatchGetUsers. |
 | GetOrgSeatCount | **SP** | Trusted-internal member count — added for subscription-service's ChangePlan (subscriptions Phase 2b §2), so a plan change can never set seats below the org's actual current member count. No identity field, same trust level as IsOrgMember. |
+| GetOrgIdBySubdomain | **SP** | Auth remediation Step 4 addition — bare subdomain→org_id lookup, no membership check by design (subdomains are public/DNS-like, same reasoning ListOrganizations/BatchGetUsers already rely on). This is what api-gateway calls to resolve org context from the `Host` header before it knows anything about the caller. |
+| HasPermission | UP (default) — **deliberately not SP**, unlike its same-shape siblings HasScopeAccess/IsScopeAdmin | Auth remediation Step 1b: found reachable as a user/scope oracle when left at the tier system's mercy alone (any caller's identity strength trivially satisfies a weak tier requirement — that's true regardless of which tier this one is declared, since the check is "at least this strong," not "exactly this"). Fixed with a handler-level check instead of a tier change: the request's `user_id` must equal the caller's own identity unless the caller is a genuine `ServicePrincipal` (checked via `instanceof`, not the tier system). Recorded here so the tier declaration doesn't look like an oversight next to its SP-tier siblings — it's UP by default and that's fine, because the real gate is in the handler. |
 | UpdateOrganization | UP | Org Admin only. |
 | UpdateOrganizationStatus | **UP** | ARCHIVED = effective tenant deletion. Never an assertion. |
 | GetMyOrganizationBySubdomain | UP | |
@@ -120,6 +130,8 @@ rather than a blanket AUP/SP grant:
 | EditComment / DeleteComment | UP | Author-only — needs the real user to enforce authorship, not an asserted id. |
 | FilterAccessiblePages | UP (verify) | Called by Search Service on behalf of a user; Search must forward the *real* user identity here, not its own service identity — this gates page visibility. If Search can't forward a real UserPrincipal, this becomes the one legitimate AUP case in Doc Service, but default to requiring UP and only relax if Step 3 verification shows it's structurally impossible. |
 | ListDocsLinkedToTask | UP (verify) | Same cross-service identity-chain concern, called from Task Service. |
+| GetCollabState | **AUP** — the platform's one reviewed exception to "never AUP for privilege/tenant-crossing RPCs" (see the rule note above) | Called by websocket-service on behalf of a realtime-collab WebSocket connection. websocket-service authenticates its own callers via a single-use internal ticket redeemed at handshake time and never holds a forwardable JWT for the connection — it can vouch for a user (`AssertedUserPrincipal`), not cryptographically prove one. Read access to a collaborative document's live state. |
+| SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint — the one AUP-reachable RPC that actually mutates content, which is exactly why this needed to be an explicit, reviewed exception rather than a quiet default. |
 
 ## chat_service.proto (21 RPCs)
 
@@ -209,6 +221,7 @@ service calls any of these six — the only internal caller anywhere in the mono
 | ListPlans | UP | `GET /api/v1/subscription/plans` — same caller. Public catalog data, but now genuinely reachable only by an authenticated user rather than "no caller at all yet." |
 | PreviewPlanChange / ChangePlan | UP | `POST /api/v1/subscription/preview` / `/change` — same caller, gated further in the Gateway on the `subscription.plan.change` permission key (a tier check alone can't express "and specifically has this permission"). |
 | CancelSubscription / ResumeSubscription | UP | `POST /api/v1/subscription/cancel` / `/resume` — same caller, Gateway-gated to Org Admin only. Not yet implemented server-side (falls through to UNIMPLEMENTED) — the tier is set correctly regardless of that gap so nothing needs revisiting when the implementation lands. |
+| DevResetOrgToFree | **SP** | Dev/test-only reset endpoint, gated separately by `sophie.subscription.dev-reset-enabled=true` (off unless explicitly enabled) — found missing from this table during the auth remediation's doc-vs-code drift audit; recorded here now, no code change needed. |
 
 ## billing_service.proto (Phase 2b/2c)
 
@@ -254,16 +267,23 @@ calendar-service's `DeleteExternalCalendarDataForConnection`; billing-service ad
 `CreateInvoice` at scaffold time, then `ListInvoices`/`GetBillingAccount` once `GrpcBillingClient`'s
 existing internal calls were found to need them too):
 
-- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`
+- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
-- file-service: all 5 RPCs (`RequestUpload`, `ConfirmUpload`, `GetFile`, `AttachFileReference`, `GetDownloadUrl`)
+- file-service: all 8 RPCs, blanket — see that section (not a per-RPC allowlist, `FilePrincipalTierPolicy` returns SERVICE unconditionally)
 - integration: `GetAccessToken`
 - calendar: `DeleteExternalCalendarDataForConnection`
-- subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription` (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them)
+- subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription`, `DevResetOrgToFree` (dev/test-only) (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them)
 - billing-service: `CreateInvoice`, `ListInvoices`, `GetBillingAccount`
 
-Everything else in the platform (~150 RPCs) requires genuine `UserPrincipal`. Nothing else is
-allowlisted for a weaker tier. integration-service and calendar-service each define exactly one
-`PrincipalTierPolicy` entry (`GetAccessToken` and `DeleteExternalCalendarDataForConnection`
-respectively) — both previously had none.
+Everything else in the platform requires genuine `UserPrincipal`, with exactly one AUP exception:
+**doc-service's `GetCollabState`/`SaveCollabState`** (see that section and the rule note above) —
+no other RPC anywhere on the platform is allowlisted for AUP. integration-service and
+calendar-service each define exactly one `PrincipalTierPolicy` entry (`GetAccessToken` and
+`DeleteExternalCalendarDataForConnection` respectively) — both previously had none.
+
+**Verified against actual code** (auth remediation, 2026-09-07): a full audit of every service's
+`*PrincipalTierPolicy` bean against this table found exactly the four additions above and nothing
+else — no RPC documented here as SP was found silently defaulting to UP in code (the direction
+that would indicate a broken internal caller), and no other undocumented non-default entry exists
+anywhere on the platform.
