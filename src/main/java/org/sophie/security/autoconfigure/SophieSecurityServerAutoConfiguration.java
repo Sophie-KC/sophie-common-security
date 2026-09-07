@@ -28,12 +28,18 @@ import org.springframework.core.annotation.Order;
 @ConditionalOnClass(name = "net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor")
 public class SophieSecurityServerAutoConfiguration {
 
+    /** Default matches the {@code sophie-api} audience protocol mapper applied to every
+     *  token-minting client (web-app, mobile-app, test-client) in {@code sophie-infra}'s Keycloak
+     *  Terraform module — see {@code modules/keycloak/clients.tf}. Overridable per service via
+     *  {@code keycloak.jwt.expected-audience} only for a service with a genuinely different need;
+     *  there isn't one today. */
     @Bean
     @ConditionalOnMissingBean
     public JwtVerifier sophieJwtVerifier(
             @Value("${keycloak.jwt.jwk-set-uri}") String jwkSetUri,
-            @Value("${keycloak.jwt.issuer-uri}") String issuerUri) {
-        return new JwtVerifier(jwkSetUri, issuerUri);
+            @Value("${keycloak.jwt.issuer-uri}") String issuerUri,
+            @Value("${keycloak.jwt.expected-audience:sophie-api}") String expectedAudience) {
+        return new JwtVerifier(jwkSetUri, issuerUri, expectedAudience);
     }
 
     /**
