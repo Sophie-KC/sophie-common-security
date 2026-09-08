@@ -51,7 +51,7 @@ dependencies {
     // AccessGuard's constructor/bean-method signature references Org Service's generated stub type.
     // compileOnly like the two dependencies above: every service this guard is wired into already
     // depends on sophie-protos for other RPCs, so it must never force a transitive version onto them.
-    compileOnly 'org.sophie:sophie-protos:0.26.0'
+    compileOnly 'org.sophie:sophie-protos:0.26.1'
 
     // JWT signature verification against Keycloak's JWKS, built directly on Nimbus rather than Spring
     // Security's NimbusJwtDecoder — this keeps spring-security-web/config off every consumer's classpath
