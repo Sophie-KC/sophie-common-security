@@ -6,7 +6,7 @@ plugins {
 
 group = 'org.sophie'
 // Same DECLARED_VERSION/publish convention as sophie-protos: bump this, tag v<version>, push the tag.
-ext.DECLARED_VERSION = '0.5.1'
+ext.DECLARED_VERSION = '0.5.2'
 version = project.findProperty('releaseVersion') ?: DECLARED_VERSION
 description = 'sophie-common-security — shared JWT/JWKS caller verification for Sophie-KC gRPC services'
 
@@ -47,6 +47,10 @@ dependencies {
     compileOnly 'io.grpc:grpc-api:1.68.0'
     compileOnly 'net.devh:grpc-spring-boot-starter:3.1.0.RELEASE'
     compileOnly 'org.springframework.boot:spring-boot-autoconfigure'
+    // VersionInfoAutoConfiguration's InfoContributor bean — compileOnly + @ConditionalOnClass so a
+    // service without actuator on its classpath (none today, but not this library's place to force it)
+    // just skips that one bean instead of failing to start.
+    compileOnly 'org.springframework.boot:spring-boot-actuator'
     compileOnly 'org.springframework:spring-context'
     // AccessGuard's constructor/bean-method signature references Org Service's generated stub type.
     // compileOnly like the two dependencies above: every service this guard is wired into already
@@ -78,6 +82,15 @@ tasks.named('test') {
 
 tasks.register('printVersion') {
     doLast { println DECLARED_VERSION }
+}
+
+// Lets VersionInfoAutoConfiguration read this library's own resolved version at runtime via
+// getClass().getPackage().getImplementationVersion() — Gradle does not populate this manifest entry
+// by default. Every service depends on this jar, so this is the one place to set it.
+jar {
+    manifest {
+        attributes('Implementation-Title': project.name, 'Implementation-Version': project.version)
+    }
 }
 
 publishing {

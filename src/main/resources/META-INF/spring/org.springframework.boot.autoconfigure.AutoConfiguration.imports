@@ -2,3 +2,4 @@ org.sophie.security.autoconfigure.SophieSecurityAutoConfiguration
 org.sophie.security.autoconfigure.SophieSecurityServerAutoConfiguration
 org.sophie.security.autoconfigure.SophieSecurityClientAutoConfiguration
 org.sophie.security.autoconfigure.SophieSecurityAccessAutoConfiguration
+org.sophie.security.autoconfigure.VersionInfoAutoConfiguration
