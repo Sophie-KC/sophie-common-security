@@ -46,7 +46,15 @@ jobs:
             exit 1
           fi
 
+      # compileOnly org.sophie:sophie-protos needs authenticated read access to that (private) package
+      # even just to build — GitHub's Maven registry 401s an unauthenticated GET even for an org
+      # member's own repo. Missing here (only the later Publish step had these), never caught before
+      # because this workflow's runner-setup step failed first, every time, until the composite-action
+      # fix above.
       - name: Build & verify
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew clean build
 
       - name: Publish to GitHub Packages
