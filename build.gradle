@@ -6,7 +6,7 @@ plugins {
 
 group = 'org.sophie'
 // Same DECLARED_VERSION/publish convention as sophie-protos: bump this, tag v<version>, push the tag.
-ext.DECLARED_VERSION = '0.5.2'
+ext.DECLARED_VERSION = '0.5.3'
 version = project.findProperty('releaseVersion') ?: DECLARED_VERSION
 description = 'sophie-common-security — shared JWT/JWKS caller verification for Sophie-KC gRPC services'
 
@@ -55,7 +55,7 @@ dependencies {
     // AccessGuard's constructor/bean-method signature references Org Service's generated stub type.
     // compileOnly like the two dependencies above: every service this guard is wired into already
     // depends on sophie-protos for other RPCs, so it must never force a transitive version onto them.
-    compileOnly 'org.sophie:sophie-protos:0.26.1'
+    compileOnly 'org.sophie:sophie-protos:0.27.0'
 
     // JWT signature verification against Keycloak's JWKS, built directly on Nimbus rather than Spring
     // Security's NimbusJwtDecoder — this keeps spring-security-web/config off every consumer's classpath
