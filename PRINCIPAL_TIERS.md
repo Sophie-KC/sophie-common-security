@@ -14,13 +14,22 @@ Rule from the phase-2 brief: anything that grants privilege or crosses a tenant 
 require **UP**, never AUP — a compromised service holding the shared secret must not be able to
 assert its way into a privileged action.
 
-**One reviewed exception exists** (doc_service.proto's `GetCollabState`/`SaveCollabState`, added
-for websocket-service's realtime-collab path — see that section below): websocket-service's own
-callers authenticate via a single-use internal ticket redeemed at WebSocket handshake time, and
-this service never receives or holds a forwardable JWT for the connection's lifetime, so it
-structurally cannot present anything stronger than an assertion for these two RPCs. This is a
-narrow, load-bearing exception to the rule above, not a precedent for widening AUP's use
-elsewhere — any other privileged/tenant-crossing RPC still must require UP.
+**Two reviewed categories of exception exist**, both structural — a caller that genuinely cannot
+hold a forwardable JWT, vouching through the internal secret instead — not a precedent for widening
+AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must require UP.
+
+1. doc_service.proto's `GetCollabState`/`SaveCollabState` (websocket-service's realtime-collab
+   path): websocket-service's own callers authenticate via a single-use internal ticket redeemed at
+   WebSocket handshake time, and this service never receives or holds a forwardable JWT for the
+   connection's lifetime.
+2. task_service.proto's `CreateTask` and doc_service.proto's `CreatePage` (personal API tokens,
+   api-tokens-design.md): a PAT-authenticated gateway request has no Keycloak JWT to forward either
+   — the gateway resolves the token to a user via org-service's `ValidateApiToken`, then vouches for
+   that user the same structural way websocket-service already does. Unlike case 1, this path is
+   reachable by an external, non-employee-controlled caller (whoever holds the token) — the actual
+   privilege boundary is unchanged (org/space access checks, entitlement checks all still run
+   exactly as before), and API tokens are the ONLY way to reach these two RPCs via AUP; a browser
+   session still always forwards a real JWT.
 
 ---
 
@@ -59,7 +68,7 @@ GetBillingAccount tier gap above is the worked example for step 5.
 
 ---
 
-## org_service.proto (41 RPCs) — highest risk, owns all role/permission/membership state
+## org_service.proto (45 RPCs) — highest risk, owns all role/permission/membership state
 
 | RPC | Tier | Why |
 |---|---|---|
@@ -101,6 +110,10 @@ GetBillingAccount tier gap above is the worked example for step 5.
 | ListApps | UP | |
 | ToggleAppFavorite | UP | User-owned preference. |
 | GetAppIconDownloadUrl | UP | |
+| CreateApiToken | UP | Mints a new personal API token (api-tokens-design.md) — owner is always `SophieSecurityContext.currentInternalUserId()`, never a request field; must be a genuine user, never an assertion. |
+| ListApiTokens | UP | Caller's own tokens only. |
+| RevokeApiToken | UP | Ownership-checked in the handler (revoking another user's token is indistinguishable from it not existing). |
+| ValidateApiToken | **SP** | Same shape and same reasoning as `ValidateSession` — this is where a PAT's identity gets resolved/minted for the rest of the request, not consumed; by definition no user principal exists yet when api-gateway calls this. Takes only the token's sha256 hash, never the plaintext. |
 
 ## task_service.proto (59 RPCs)
 
@@ -114,7 +127,7 @@ sprints, doc-links. Explicit exceptions:
 | ProcessVcsWebhookEvent | **SP** | New with the split — integration-service calls this after verifying a GitHub/GitLab webhook signature/token and resolving the connection; no user in context, same trust tier as ResolveTaskReferenceInternal. |
 | DeleteVcsReferencesForConnection | **SP** | New with the split — integration-service calls this from its DisconnectIntegration flow to clean up references that now live in a different service's DB. |
 | CreateTaskType / UpdateTaskType / DeleteTaskType | UP | Org-admin-gated catalog changes. |
-| CreateTask | UP | Note: optional `reporter_id` can currently be set by the caller to attribute a task to someone else — flagged for the handler-level fix in Step 3, not a tier change. |
+| CreateTask | **AUP** (was UP) | api-tokens-design.md: a personal-API-token-authenticated gateway request has no forwardable JWT — same structural exception as doc-service's `GetCollabState`/`SaveCollabState`, see the rule note above. A real browser session still always forwards a genuine JWT and satisfies this trivially. Note: optional `reporter_id` can currently be set by the caller to attribute a task to someone else — flagged for the handler-level fix in Step 3, not a tier change. |
 | BatchGetTaskSummaries | UP | "No per-task filtering beyond normal authenticated caller" per comment — confirm this isn't over-broad once enforced; keep at UP, don't downgrade. |
 | LinkDoc | UP | Cross-service call to Doc Service — verify the *user's* identity is forwarded (not re-asserted with elevated trust) when Task Service calls Doc Service on the user's behalf. |
 
@@ -130,8 +143,9 @@ rather than a blanket AUP/SP grant:
 | EditComment / DeleteComment | UP | Author-only — needs the real user to enforce authorship, not an asserted id. |
 | FilterAccessiblePages | UP (verify) | Called by Search Service on behalf of a user; Search must forward the *real* user identity here, not its own service identity — this gates page visibility. If Search can't forward a real UserPrincipal, this becomes the one legitimate AUP case in Doc Service, but default to requiring UP and only relax if Step 3 verification shows it's structurally impossible. |
 | ListDocsLinkedToTask | UP (verify) | Same cross-service identity-chain concern, called from Task Service. |
-| GetCollabState | **AUP** — the platform's one reviewed exception to "never AUP for privilege/tenant-crossing RPCs" (see the rule note above) | Called by websocket-service on behalf of a realtime-collab WebSocket connection. websocket-service authenticates its own callers via a single-use internal ticket redeemed at handshake time and never holds a forwardable JWT for the connection — it can vouch for a user (`AssertedUserPrincipal`), not cryptographically prove one. Read access to a collaborative document's live state. |
-| SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint — the one AUP-reachable RPC that actually mutates content, which is exactly why this needed to be an explicit, reviewed exception rather than a quiet default. |
+| GetCollabState | **AUP** — reviewed exception #1 (see the rule note above) | Called by websocket-service on behalf of a realtime-collab WebSocket connection. websocket-service authenticates its own callers via a single-use internal ticket redeemed at handshake time and never holds a forwardable JWT for the connection — it can vouch for a user (`AssertedUserPrincipal`), not cryptographically prove one. Read access to a collaborative document's live state. |
+| SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint. |
+| CreatePage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | A personal-API-token-authenticated gateway request has no forwardable JWT either — same structural reasoning as GetCollabState/SaveCollabState, different caller (api-gateway vouching for a token owner, not websocket-service vouching for a ticket holder). A real browser session still always forwards a genuine JWT and satisfies this trivially; space/entitlement access checks downstream are unchanged. |
 
 ## chat_service.proto (21 RPCs)
 
@@ -260,14 +274,14 @@ yet, so no tier decision is due.
 
 ## Summary — ServicePrincipal allowlist (revised; supersedes the brief's list of 3)
 
-The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 25 (was 18 pre-split;
+The brief listed 3 SP-eligible RPCs from phase 1. The real, complete list is 26 (was 18 pre-split;
 the vcs-service -> integration-service split removed the one AUP entry and added two genuine SP
 ones; the calendar-integration work added two more — integration-service's `GetAccessToken` and
 calendar-service's `DeleteExternalCalendarDataForConnection`; billing-service added three —
 `CreateInvoice` at scaffold time, then `ListInvoices`/`GetBillingAccount` once `GrpcBillingClient`'s
 existing internal calls were found to need them too):
 
-- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`
+- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`, `ValidateApiToken`
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
 - notification: `CreateNotification`
 - file-service: all 8 RPCs, blanket — see that section (not a per-RPC allowlist, `FilePrincipalTierPolicy` returns SERVICE unconditionally)
@@ -276,11 +290,13 @@ existing internal calls were found to need them too):
 - subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription`, `DevResetOrgToFree` (dev/test-only) (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them)
 - billing-service: `CreateInvoice`, `ListInvoices`, `GetBillingAccount`
 
-Everything else in the platform requires genuine `UserPrincipal`, with exactly one AUP exception:
-**doc-service's `GetCollabState`/`SaveCollabState`** (see that section and the rule note above) —
-no other RPC anywhere on the platform is allowlisted for AUP. integration-service and
-calendar-service each define exactly one `PrincipalTierPolicy` entry (`GetAccessToken` and
-`DeleteExternalCalendarDataForConnection` respectively) — both previously had none.
+Everything else in the platform requires genuine `UserPrincipal`, with exactly three AUP exceptions:
+**doc-service's `GetCollabState`/`SaveCollabState`** and, added for personal API tokens
+(api-tokens-design.md), **task-service's `CreateTask`** and **doc-service's `CreatePage`** (see
+those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
+AUP. integration-service and calendar-service each define exactly one `PrincipalTierPolicy` entry
+(`GetAccessToken` and `DeleteExternalCalendarDataForConnection` respectively) — both previously had
+none.
 
 **Verified against actual code** (auth remediation, 2026-09-07): a full audit of every service's
 `*PrincipalTierPolicy` bean against this table found exactly the four additions above and nothing
