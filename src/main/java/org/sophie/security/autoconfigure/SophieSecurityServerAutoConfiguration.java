@@ -7,6 +7,7 @@ import org.sophie.security.grpc.JwtServerInterceptor;
 import org.sophie.security.jwt.JwtVerifier;
 import org.sophie.security.policy.PrincipalTierPolicy;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -46,6 +47,12 @@ public class SophieSecurityServerAutoConfiguration {
      * {@code tierPolicyProvider} is optional: a service that hasn't defined a {@link PrincipalTierPolicy}
      * bean gets {@code null} here, and every RPC then falls back to {@link PrincipalTierPolicy#DEFAULT_TIER}
      * inside the interceptor — enforcing still works, just without any allowlisted exceptions.
+     *
+     * <p>{@code staffJwtVerifierProvider} is likewise optional, and by NAME rather than type (a plain
+     * {@code ObjectProvider<JwtVerifier>} would be ambiguous the moment two {@code JwtVerifier} beans
+     * exist at all) — null everywhere except a service that defines its own {@code JwtVerifier} bean
+     * named exactly {@code "staffJwtVerifier"} (org-service today, for its admin surface). Every other
+     * service's interceptor is byte-for-byte what it was before this parameter existed.
      */
     @Bean
     @GrpcGlobalServerInterceptor
@@ -54,8 +61,10 @@ public class SophieSecurityServerAutoConfiguration {
             JwtVerifier jwtVerifier,
             SophieSecurityProperties props,
             IdentityComparisonLogger comparisonLogger,
-            ObjectProvider<PrincipalTierPolicy> tierPolicyProvider) {
-        return new JwtServerInterceptor(jwtVerifier, props.getInternal().getSharedSecret(), comparisonLogger,
+            ObjectProvider<PrincipalTierPolicy> tierPolicyProvider,
+            @Qualifier("staffJwtVerifier") ObjectProvider<JwtVerifier> staffJwtVerifierProvider) {
+        return new JwtServerInterceptor(jwtVerifier, staffJwtVerifierProvider.getIfAvailable(),
+                props.getInternal().getSharedSecret(), comparisonLogger,
                 props.isEnforce(), tierPolicyProvider.getIfAvailable());
     }
 }
