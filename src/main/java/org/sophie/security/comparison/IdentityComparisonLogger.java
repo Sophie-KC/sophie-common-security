@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.sophie.security.principal.AssertedUserPrincipal;
 import org.sophie.security.principal.ServicePrincipal;
 import org.sophie.security.principal.SophiePrincipal;
+import org.sophie.security.principal.StaffPrincipal;
 import org.sophie.security.principal.UserPrincipal;
 
 /**
@@ -49,6 +50,12 @@ public class IdentityComparisonLogger {
                     rpcMethod, suppliedUserId, suppliedPresent);
             case AssertedUserPrincipal aup -> compareUser("ASSERTED_USER", aup.internalUserId(), aup.keycloakSub(),
                     rpcMethod, suppliedUserId, suppliedPresent);
+            // Staff have no org-service internal_user_id to compare against x-user-id at all — a
+            // different identity universe entirely (see StaffPrincipal's own doc) — so this is just a
+            // presence log, not a match/mismatch comparison like the two branches above.
+            case StaffPrincipal sp ->
+                    log.debug("reason=STAFF_PRINCIPAL principalKind=STAFF service={} rpc={} sub={} role={}",
+                            serviceName, rpcMethod, sp.keycloakSub(), sp.role());
         }
     }
 

@@ -18,10 +18,14 @@ import org.sophie.security.policy.PrincipalTierPolicy;
 import org.sophie.security.principal.AssertedUserPrincipal;
 import org.sophie.security.principal.ServicePrincipal;
 import org.sophie.security.principal.SophiePrincipal;
+import org.sophie.security.principal.StaffPrincipal;
 import org.sophie.security.principal.UserPrincipal;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Validates the caller's bearer JWT (or, absent one, the internal shared secret) and populates a
@@ -52,7 +56,14 @@ public class JwtServerInterceptor implements ServerInterceptor {
     static final Metadata.Key<String> ASSERTED_KEYCLOAK_SUB =
             Metadata.Key.of("x-asserted-keycloak-sub", Metadata.ASCII_STRING_MARSHALLER);
 
+    // Keycloak's own always-present realm roles — never a real staff assignment, so they're excluded
+    // when picking "the" role out of a staff token's realm_access.roles claim. Kept generic (no
+    // PLATFORM_ADMIN/BILLING_STAFF/SUPPORT string here) so this shared library never has to know the
+    // specific staff role names a consuming service invents.
+    private static final Set<String> KEYCLOAK_BUILTIN_ROLES = Set.of("offline_access", "uma_authorization");
+
     private final JwtVerifier jwtVerifier;
+    private final JwtVerifier staffJwtVerifier;
     private final String expectedInternalSecret;
     private final IdentityComparisonLogger comparisonLogger;
     private final boolean enforce;
@@ -65,7 +76,20 @@ public class JwtServerInterceptor implements ServerInterceptor {
 
     public JwtServerInterceptor(JwtVerifier jwtVerifier, String expectedInternalSecret,
             IdentityComparisonLogger comparisonLogger, boolean enforce, PrincipalTierPolicy tierPolicy) {
+        this(jwtVerifier, null, expectedInternalSecret, comparisonLogger, enforce, tierPolicy);
+    }
+
+    /**
+     * @param staffJwtVerifier optional second verifier for an isolated staff Keycloak realm — null
+     *                         for every service that has no staff-facing RPCs at all (i.e. everyone
+     *                         except org-service today). Tried only when {@code jwtVerifier} (the
+     *                         customer realm) rejects the token outright, never both — a token is
+     *                         from exactly one realm.
+     */
+    public JwtServerInterceptor(JwtVerifier jwtVerifier, JwtVerifier staffJwtVerifier, String expectedInternalSecret,
+            IdentityComparisonLogger comparisonLogger, boolean enforce, PrincipalTierPolicy tierPolicy) {
         this.jwtVerifier = jwtVerifier;
+        this.staffJwtVerifier = staffJwtVerifier;
         this.expectedInternalSecret = expectedInternalSecret;
         this.comparisonLogger = comparisonLogger;
         this.enforce = enforce;
@@ -87,9 +111,25 @@ public class JwtServerInterceptor implements ServerInterceptor {
                 JWTClaimsSet claims = jwtVerifier.verify(rawToken);
                 String internalUserId = claims.getStringClaim("internal_user_id");
                 principal = new UserPrincipal(claims.getSubject(), internalUserId, rawToken);
-            } catch (Exception e) {
-                log.warn("JWT verification failed for {}: {}", methodName, e.toString());
-                rawToken = null;
+            } catch (Exception primaryFailure) {
+                // A token from the isolated staff realm always fails the customer-realm verifier
+                // outright (wrong issuer) — that's the expected, non-error path here, not a fallback
+                // from a broken primary token. Only actually try it when a staff verifier is even
+                // configured (org-service today; null everywhere else, matching every existing
+                // deployment with zero behavior change).
+                if (staffJwtVerifier != null) {
+                    try {
+                        JWTClaimsSet staffClaims = staffJwtVerifier.verify(rawToken);
+                        principal = new StaffPrincipal(staffClaims.getSubject(), extractStaffRole(staffClaims), rawToken);
+                    } catch (Exception staffFailure) {
+                        log.warn("JWT verification failed for {} against both the customer and staff realms: {} / {}",
+                                methodName, primaryFailure.toString(), staffFailure.toString());
+                        rawToken = null;
+                    }
+                } else {
+                    log.warn("JWT verification failed for {}: {}", methodName, primaryFailure.toString());
+                    rawToken = null;
+                }
             }
         } else {
             String secret = headers.get(INTERNAL_SECRET);
@@ -156,5 +196,27 @@ public class JwtServerInterceptor implements ServerInterceptor {
 
     private static boolean constantTimeEquals(String a, String b) {
         return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The one real role out of the staff realm's {@code realm_access.roles} claim, filtering out
+     *  Keycloak's own always-present built-ins (see {@link #KEYCLOAK_BUILTIN_ROLES}) and the
+     *  {@code default-roles-<realm>} composite every realm mints automatically. Null if none remain —
+     *  a staff account provisioned with no role assigned yet, which the caller must treat as
+     *  unauthorized, never as "figure out a default." */
+    private static String extractStaffRole(JWTClaimsSet claims) {
+        try {
+            Map<String, Object> realmAccess = claims.getJSONObjectClaim("realm_access");
+            if (realmAccess == null || !(realmAccess.get("roles") instanceof List<?> roles)) {
+                return null;
+            }
+            return roles.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .filter(role -> !KEYCLOAK_BUILTIN_ROLES.contains(role) && !role.startsWith("default-roles-"))
+                    .findFirst()
+                    .orElse(null);
+        } catch (java.text.ParseException e) {
+            return null;
+        }
     }
 }
