@@ -33,9 +33,19 @@ public class SophieSecurityServerAutoConfiguration {
      *  token-minting client (web-app, mobile-app, test-client) in {@code sophie-infra}'s Keycloak
      *  Terraform module — see {@code modules/keycloak/clients.tf}. Overridable per service via
      *  {@code keycloak.jwt.expected-audience} only for a service with a genuinely different need;
-     *  there isn't one today. */
+     *  there isn't one today.
+     *
+     * <p>{@code @ConditionalOnMissingBean(name = "sophieJwtVerifier")}, NOT the bare, by-type form:
+     * org-service now also defines a second, differently-purposed {@code JwtVerifier} bean
+     * ({@code staffJwtVerifier}, for the isolated staff realm — see {@code StaffJwtVerifierConfig}).
+     * A by-type {@code @ConditionalOnMissingBean} would see that unrelated bean, conclude "a
+     * JwtVerifier already exists," and skip creating this one entirely — leaving the interceptor's
+     * primary {@code jwtVerifier} parameter with no real candidate except the staff bean, silently
+     * misrouting every customer-realm token through the staff JWKS. Scoping by name means only a
+     * service that defines its own bean NAMED {@code sophieJwtVerifier} (overriding this one on
+     * purpose) suppresses it; an unrelated same-typed bean like {@code staffJwtVerifier} no longer can. */
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(name = "sophieJwtVerifier")
     public JwtVerifier sophieJwtVerifier(
             @Value("${keycloak.jwt.jwk-set-uri}") String jwkSetUri,
             @Value("${keycloak.jwt.issuer-uri}") String issuerUri,
@@ -53,12 +63,17 @@ public class SophieSecurityServerAutoConfiguration {
      * exist at all) — null everywhere except a service that defines its own {@code JwtVerifier} bean
      * named exactly {@code "staffJwtVerifier"} (org-service today, for its admin surface). Every other
      * service's interceptor is byte-for-byte what it was before this parameter existed.
+     *
+     * <p>{@code jwtVerifier} is likewise explicitly qualified by name ({@code "sophieJwtVerifier"},
+     * matching {@link #sophieJwtVerifier}'s bean name) now that a service can define a second
+     * {@code JwtVerifier} bean — without this, plain by-type injection would throw
+     * {@code NoUniqueBeanDefinitionException} on org-service the moment both beans exist.
      */
     @Bean
     @GrpcGlobalServerInterceptor
     @Order(Ordered.HIGHEST_PRECEDENCE + 10)
     public ServerInterceptor sophieJwtServerInterceptor(
-            JwtVerifier jwtVerifier,
+            @Qualifier("sophieJwtVerifier") JwtVerifier jwtVerifier,
             SophieSecurityProperties props,
             IdentityComparisonLogger comparisonLogger,
             ObjectProvider<PrincipalTierPolicy> tierPolicyProvider,
