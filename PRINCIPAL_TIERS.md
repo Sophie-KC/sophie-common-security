@@ -22,14 +22,15 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    path): websocket-service's own callers authenticate via a single-use internal ticket redeemed at
    WebSocket handshake time, and this service never receives or holds a forwardable JWT for the
    connection's lifetime.
-2. task_service.proto's `CreateTask` and doc_service.proto's `CreatePage` (personal API tokens,
-   api-tokens-design.md): a PAT-authenticated gateway request has no Keycloak JWT to forward either
-   — the gateway resolves the token to a user via org-service's `ValidateApiToken`, then vouches for
-   that user the same structural way websocket-service already does. Unlike case 1, this path is
-   reachable by an external, non-employee-controlled caller (whoever holds the token) — the actual
-   privilege boundary is unchanged (org/space access checks, entitlement checks all still run
-   exactly as before), and API tokens are the ONLY way to reach these two RPCs via AUP; a browser
-   session still always forwards a real JWT.
+2. task_service.proto's `CreateTask` and doc_service.proto's `CreatePage`/`PublishPage` (personal API
+   tokens, api-tokens-design.md): a PAT-authenticated gateway request has no Keycloak JWT to forward
+   either — the gateway resolves the token to a user via org-service's `ValidateApiToken`, then
+   vouches for that user the same structural way websocket-service already does. Unlike case 1, this
+   path is reachable by an external, non-employee-controlled caller (whoever holds the token) — the
+   actual privilege boundary is unchanged (org/space access checks, entitlement checks all still run
+   exactly as before), and API tokens are the ONLY way to reach these three RPCs via AUP; a browser
+   session still always forwards a real JWT. `PublishPage` shares `CreatePage`'s `doc:create` PAT
+   scope rather than getting its own — see `ApiTokenScopeRegistry`'s own doc comment in api-gateway.
 
 ---
 
@@ -146,6 +147,7 @@ rather than a blanket AUP/SP grant:
 | GetCollabState | **AUP** — reviewed exception #1 (see the rule note above) | Called by websocket-service on behalf of a realtime-collab WebSocket connection. websocket-service authenticates its own callers via a single-use internal ticket redeemed at handshake time and never holds a forwardable JWT for the connection — it can vouch for a user (`AssertedUserPrincipal`), not cryptographically prove one. Read access to a collaborative document's live state. |
 | SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint. |
 | CreatePage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | A personal-API-token-authenticated gateway request has no forwardable JWT either — same structural reasoning as GetCollabState/SaveCollabState, different caller (api-gateway vouching for a token owner, not websocket-service vouching for a ticket holder). A real browser session still always forwards a genuine JWT and satisfies this trivially; space/entitlement access checks downstream are unchanged. |
+| PublishPage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | Same reasoning and same PAT scope (`doc:create`) as CreatePage — lets a token write real content into a page it just created, not just an empty shell. `PageAccessGuard.requireAccess`/`requireWriteAccess` still independently verify the resolved user actually has space/org write access to that specific page; the tier downgrade only affects whether the asserted identity itself is accepted, not what it's allowed to touch. |
 
 ## chat_service.proto (21 RPCs)
 
@@ -292,11 +294,14 @@ existing internal calls were found to need them too):
 
 Everything else in the platform requires genuine `UserPrincipal`, with exactly three AUP exceptions:
 **doc-service's `GetCollabState`/`SaveCollabState`** and, added for personal API tokens
-(api-tokens-design.md), **task-service's `CreateTask`** and **doc-service's `CreatePage`** (see
-those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
+(api-tokens-design.md), **task-service's `CreateTask`** and **doc-service's `CreatePage`/`PublishPage`**
+(see those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
 AUP. integration-service and calendar-service each define exactly one `PrincipalTierPolicy` entry
 (`GetAccessToken` and `DeleteExternalCalendarDataForConnection` respectively) — both previously had
 none.
+
+(`PublishPage` was added after the 2026-09-07 audit below, alongside `CreateTask`/`CreatePage` under
+the same personal-API-token exception category — the audit's "four additions" count predates it.)
 
 **Verified against actual code** (auth remediation, 2026-09-07): a full audit of every service's
 `*PrincipalTierPolicy` bean against this table found exactly the four additions above and nothing
