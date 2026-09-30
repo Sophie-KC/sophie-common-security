@@ -115,6 +115,10 @@ GetBillingAccount tier gap above is the worked example for step 5.
 | ListApiTokens | UP | Caller's own tokens only. |
 | RevokeApiToken | UP | Ownership-checked in the handler (revoking another user's token is indistinguishable from it not existing). |
 | ValidateApiToken | **SP** | Same shape and same reasoning as `ValidateSession` — this is where a PAT's identity gets resolved/minted for the rest of the request, not consumed; by definition no user principal exists yet when api-gateway calls this. Takes only the token's sha256 hash, never the plaintext. |
+| RegisterDevice | UP | Device sessions (desktop-implementation-design.md §12.2) — owner is always `SophieSecurityContext.currentInternalUserId()`, never a request field. `keycloak_session_id` is api-gateway's read of the validated JWT's `sid` claim. Re-registering in place only ever matches a live device the caller owns. |
+| ListMyDevices | UP | Caller's own non-revoked devices only. |
+| RevokeDevice | UP | Ownership-checked in the service (someone else's device is indistinguishable from none). Also ends the device's Keycloak session via org-service's own admin client. |
+| TouchDevice | UP | api-gateway's fire-and-forget last-seen bump on WebSocket-ticket mint; one UPDATE matching only the caller's own live device. Must stay UP — a SP caller has no user to scope the UPDATE to. |
 
 ## task_service.proto (59 RPCs)
 
