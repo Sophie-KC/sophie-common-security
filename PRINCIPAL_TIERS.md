@@ -46,14 +46,16 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    `CreateTaskComment`, `AttachFileToTask`, `ListMyOpenTasks` (plus `CreateTask`, already AUP under
    #2).
 
-**Known limit of exception #3 (2026-10-04):** the shared `AccessGuard` (`requireOrgMember` /
+**AccessGuard and exception #3 (2026-10-04):** the shared `AccessGuard` (`requireOrgMember` /
 `requireOrgAdmin` / `requireOrgPermission`) resolves the caller through `ValidateSession(keycloak_sub)`
-and refuses any principal without a Keycloak sub. An asserted user carries none, so every path that
-goes through `AccessGuard` still refuses telegram-service — notably file-service's `ConfirmUpload` /
-`AttachFileReference` (attachments sent to the bot can't be added to a task). A plain ServicePrincipal
-has no sub either, so billing-service's own server-side `ConfirmUpload` of invoice PDFs looks affected
-by the same check. Lifting it means teaching `AccessGuard` to validate by internal user id — a library
-change, deliberately not made here.
+and refuses any principal without a Keycloak sub, so asserted users are refused on every
+AccessGuard-backed path. **One narrow exception, by operator decision:** file-service's `ConfirmUpload`
+and `GetFile` (metadata only) accept an asserted user vouched for by `telegram-service` (or by
+`task-service` re-asserting that user during `AttachFileToTask`) when that user is an ACTIVE member of
+the file's own org (`IsOrgMember`) — so a screenshot sent to the Telegram bot can be attached to the
+task it creates. See `FileAccessGuard#loadFileForTelegramAttach`. Download URLs and every other
+file-service RPC keep the strict check. A plain ServicePrincipal still has no sub, so billing-service's
+own server-side `ConfirmUpload` of invoice PDFs still looks affected — not addressed here.
 
 ---
 
