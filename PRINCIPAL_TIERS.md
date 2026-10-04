@@ -46,6 +46,15 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    `CreateTaskComment`, `AttachFileToTask`, `ListMyOpenTasks` (plus `CreateTask`, already AUP under
    #2).
 
+**Known limit of exception #3 (2026-10-04):** the shared `AccessGuard` (`requireOrgMember` /
+`requireOrgAdmin` / `requireOrgPermission`) resolves the caller through `ValidateSession(keycloak_sub)`
+and refuses any principal without a Keycloak sub. An asserted user carries none, so every path that
+goes through `AccessGuard` still refuses telegram-service — notably file-service's `ConfirmUpload` /
+`AttachFileReference` (attachments sent to the bot can't be added to a task). A plain ServicePrincipal
+has no sub either, so billing-service's own server-side `ConfirmUpload` of invoice PDFs looks affected
+by the same check. Lifting it means teaching `AccessGuard` to validate by internal user id — a library
+change, deliberately not made here.
+
 ---
 
 ## New service checklist
@@ -89,6 +98,7 @@ GetBillingAccount tier gap above is the worked example for step 5.
 |---|---|---|
 | ValidateSession | **SP** | Gateway-only session bootstrap; this is where identity gets minted, not consumed. Must never accept an assertion (nothing to assert yet). |
 | CreateOrganization | **UP** | Creates a tenant; `created_by_user_id` must not be spoofable to attribute org creation to someone else. |
+| ListUserScopeAccess | **AUP** (was UP) — reviewed exception #3, one hop downstream | task-service's `ListMyProjects` / `ListMyOpenTasks` resolve the caller's project access here; when telegram-service calls them as a linked user the asserted identity propagates to this call. Like `ListMyRoleIds` it answers only about the verified caller. Found by running the Telegram draft flow, not by reading. |
 | GetOrganization | **AUP** (was UP) — reviewed exception #3 | telegram-service reads the linked org's name for the user it acts for. The handler resolves the caller via `currentInternalUserId()` and keeps its `isOrgMember` gate (PERMISSION_DENIED for a non-member), so an asserted user sees only orgs they belong to. |
 | SignUp | **SP, no user principal** | No user exists yet. Must stay reachable with internal secret only — never a bare unauthenticated call. Not "public" — the secret is what keeps it internal. |
 | CreateOrgMember | **UP** | Comment: caller must be org's Org Admin. Provisions membership + role — privilege grant. |
@@ -150,6 +160,7 @@ sprints, doc-links. Explicit exceptions:
 | GetTask / GetProject / ListMyProjects / ListTaskTypes / ListWorkflowStatuses / ListWorkflowTransitions | **AUP** (was UP) — reviewed exception #3 | telegram-service reads a task and the choices around it (status transitions, task types, projects) for the linked user it acts for. Each handler resolves the caller via `currentInternalUserId()` and runs the same project-access checks a browser call does. |
 | ChangeTaskStatus / UpdateTask / CreateTaskComment / AttachFileToTask | **AUP** (was UP) — reviewed exception #3 | The task actions a user can take from inside Telegram (move status, edit, comment, attach a file sent to the bot). Same handlers, same project-access and workflow checks as the web app; the tier change only affects whether telegram-service's asserted identity is accepted, not what that user may touch. |
 | ListMyOpenTasks | **AUP** (was UP) — reviewed exception #3 | Caller's own open tasks, for the bot's task list. Caller-scoped via `currentInternalUserId()`. |
+| ListTaskComments | **AUP** (was UP) — reviewed exception #3 | "Show full" on a task.commented / task.mentioned notification pages through it to find the comment (there is no comment-by-id read). Same `projectGuard.loadWithAccess` as a browser call. |
 | BatchGetTaskSummaries | UP | "No per-task filtering beyond normal authenticated caller" per comment — confirm this isn't over-broad once enforced; keep at UP, don't downgrade. |
 | LinkDoc | UP | Cross-service call to Doc Service — verify the *user's* identity is forwarded (not re-asserted with elevated trust) when Task Service calls Doc Service on the user's behalf. |
 
@@ -331,7 +342,8 @@ tokens (api-tokens-design.md), **task-service's `CreateTask`** and **doc-service
 **telegram-service acting for a linked user** (#3) — org-service's `GetOrganization`, chat-service's
 `GetMessage`, calendar-service's `GetEventDetail`, and task-service's `GetTask`, `GetProject`,
 `ListMyProjects`, `ListTaskTypes`, `ListWorkflowStatuses`, `ListWorkflowTransitions`,
-`ChangeTaskStatus`, `UpdateTask`, `CreateTaskComment`, `AttachFileToTask` and `ListMyOpenTasks` (see
+`ChangeTaskStatus`, `UpdateTask`, `CreateTaskComment`, `ListTaskComments`, `AttachFileToTask` and
+`ListMyOpenTasks`, plus org-service's `ListUserScopeAccess` one hop downstream (see
 those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
 AUP. integration-service and calendar-service each defined exactly one `PrincipalTierPolicy` entry
 (`GetAccessToken` and `DeleteExternalCalendarDataForConnection` respectively) — both previously had
