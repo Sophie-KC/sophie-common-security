@@ -14,7 +14,7 @@ Rule from the phase-2 brief: anything that grants privilege or crosses a tenant 
 require **UP**, never AUP — a compromised service holding the shared secret must not be able to
 assert its way into a privileged action.
 
-**Two reviewed categories of exception exist**, both structural — a caller that genuinely cannot
+**Three reviewed categories of exception exist**, all structural — a caller that genuinely cannot
 hold a forwardable JWT, vouching through the internal secret instead — not a precedent for widening
 AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must require UP.
 
@@ -31,6 +31,20 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    exactly as before), and API tokens are the ONLY way to reach these three RPCs via AUP; a browser
    session still always forwards a real JWT. `PublishPage` shares `CreatePage`'s `doc:create` PAT
    scope rather than getting its own — see `ApiTokenScopeRegistry`'s own doc comment in api-gateway.
+3. **telegram-service acts for a linked user** (claude/telegram-contracts.md): when a user taps
+   "Show full" or a task action inside Telegram, there is no browser session and no forwardable JWT —
+   the user is acting inside Telegram, and the only thing tying them to Sophie KC is their Telegram
+   link. telegram-service asserts the internal `users.id` of an ACTIVE link, and only after
+   re-checking, on that same request, that the link is still ACTIVE and that the user is still an
+   active member of the link's org. Access checks downstream are unchanged — each RPC still resolves
+   the caller through `SophieSecurityContext.currentInternalUserId()` and runs its normal
+   membership/visibility/project-access checks, so the asserted user can reach exactly what they
+   could reach from the web app and nothing more. The exception is limited to the RPCs listed under
+   it below: org-service `GetOrganization`; chat-service `GetMessage`; calendar-service
+   `GetEventDetail`; task-service `GetTask`, `GetProject`, `ListMyProjects`, `ListTaskTypes`,
+   `ListWorkflowStatuses`, `ListWorkflowTransitions`, `ChangeTaskStatus`, `UpdateTask`,
+   `CreateTaskComment`, `AttachFileToTask`, `ListMyOpenTasks` (plus `CreateTask`, already AUP under
+   #2).
 
 ---
 
@@ -75,7 +89,7 @@ GetBillingAccount tier gap above is the worked example for step 5.
 |---|---|---|
 | ValidateSession | **SP** | Gateway-only session bootstrap; this is where identity gets minted, not consumed. Must never accept an assertion (nothing to assert yet). |
 | CreateOrganization | **UP** | Creates a tenant; `created_by_user_id` must not be spoofable to attribute org creation to someone else. |
-| GetOrganization | UP | Low-sensitivity read; default tier still applies (no identity field today — verify no cross-tenant leak once enforced). |
+| GetOrganization | **AUP** (was UP) — reviewed exception #3 | telegram-service reads the linked org's name for the user it acts for. The handler resolves the caller via `currentInternalUserId()` and keeps its `isOrgMember` gate (PERMISSION_DENIED for a non-member), so an asserted user sees only orgs they belong to. |
 | SignUp | **SP, no user principal** | No user exists yet. Must stay reachable with internal secret only — never a bare unauthenticated call. Not "public" — the secret is what keeps it internal. |
 | CreateOrgMember | **UP** | Comment: caller must be org's Org Admin. Provisions membership + role — privilege grant. |
 | ListOrgMembers | UP | Org Admin only. |
@@ -133,6 +147,9 @@ sprints, doc-links. Explicit exceptions:
 | DeleteVcsReferencesForConnection | **SP** | New with the split — integration-service calls this from its DisconnectIntegration flow to clean up references that now live in a different service's DB. |
 | CreateTaskType / UpdateTaskType / DeleteTaskType | UP | Org-admin-gated catalog changes. |
 | CreateTask | **AUP** (was UP) | api-tokens-design.md: a personal-API-token-authenticated gateway request has no forwardable JWT — same structural exception as doc-service's `GetCollabState`/`SaveCollabState`, see the rule note above. A real browser session still always forwards a genuine JWT and satisfies this trivially. Note: optional `reporter_id` can currently be set by the caller to attribute a task to someone else — flagged for the handler-level fix in Step 3, not a tier change. |
+| GetTask / GetProject / ListMyProjects / ListTaskTypes / ListWorkflowStatuses / ListWorkflowTransitions | **AUP** (was UP) — reviewed exception #3 | telegram-service reads a task and the choices around it (status transitions, task types, projects) for the linked user it acts for. Each handler resolves the caller via `currentInternalUserId()` and runs the same project-access checks a browser call does. |
+| ChangeTaskStatus / UpdateTask / CreateTaskComment / AttachFileToTask | **AUP** (was UP) — reviewed exception #3 | The task actions a user can take from inside Telegram (move status, edit, comment, attach a file sent to the bot). Same handlers, same project-access and workflow checks as the web app; the tier change only affects whether telegram-service's asserted identity is accepted, not what that user may touch. |
+| ListMyOpenTasks | **AUP** (was UP) — reviewed exception #3 | Caller's own open tasks, for the bot's task list. Caller-scoped via `currentInternalUserId()`. |
 | BatchGetTaskSummaries | UP | "No per-task filtering beyond normal authenticated caller" per comment — confirm this isn't over-broad once enforced; keep at UP, don't downgrade. |
 | LinkDoc | UP | Cross-service call to Doc Service — verify the *user's* identity is forwarded (not re-asserted with elevated trust) when Task Service calls Doc Service on the user's behalf. |
 
@@ -167,6 +184,7 @@ Default **UP** for all messaging/reactions/pins/read-state. Never-assert excepti
 | EditMessage | UP | Sender-only. |
 | DeleteMessage | UP | Sender or role-gated. |
 | UpdateChannelDescription / UpdateChannelName | UP | OWNER/ADMIN-gated. |
+| GetMessage | **AUP** (was UP) — reviewed exception #3 | telegram-service's "Show full" for a chat notification. The handler resolves the caller via `currentInternalUserId()` (`IdentityServerInterceptor` falls back to the verified principal when `x-user-id` is absent), and `MessageService.getMessage` keeps its `requireMember` check. |
 
 ## search_service.proto (2 RPCs)
 
@@ -203,6 +221,7 @@ integration-service's `GetAccessToken` above, which needed a symmetric internal-
 | RPC | Tier | Why |
 |---|---|---|
 | DeleteExternalCalendarDataForConnection | **SP** | Called by integration-service's `DisconnectIntegration` flow to clean up synced Google Calendar data — same pattern as task_service.proto's `DeleteVcsReferencesForConnection`. No user in context. |
+| GetEventDetail | **AUP** (was UP) — reviewed exception #3 | telegram-service's "Show full" for a calendar notification. The handler resolves the caller via `currentInternalUserId()` (no keycloakSub needed), and `requireVisible` (organizer or attendee, calendar module on) still applies. |
 
 ## file_service.proto (8 RPCs) — entire service is internal-only by design
 
@@ -276,6 +295,14 @@ yet, so no tier decision is due.
 | RegisterPushToken | UP | Upserts caller's own device token. |
 | UnregisterPushToken | UP (documented risk) | Proto comment says this is explicitly *token*-scoped, not caller-scoped — anyone holding a token value can unregister it, treated as a device secret by design. Keep at UP for the *call*, but this is a pre-existing accepted-risk design choice, not something Step 3 should silently "fix" by loosening/tightening without flagging it back to you first. |
 
+## telegram_service.proto (10 RPCs)
+
+| RPC | Tier | Why |
+|---|---|---|
+| ShouldDeliver | **SP** | notification-service asks on a recipient's behalf, from its async after-commit delivery path — no user in context. Answers only "should this notification also go to Telegram" (bot configured, org enabled, ACTIVE link, type and scope enabled); returns nothing about the link itself. |
+| CreateLinkCode / GetLinkStatus / Unlink / GetTelegramPrefs / UpdateTelegramPrefs / GetScopePref / SetScopePref | UP | api-gateway forwards a real user. Each acts on the caller's own `currentInternalUserId()`, never a request field. |
+| GetOrgTelegramSettings / UpdateOrgTelegramSettings | UP | Same, plus Org Admin only (org-service `IsOrgAdmin`). |
+
 ---
 
 ## Summary — ServicePrincipal allowlist (revised; supersedes the brief's list of 3)
@@ -293,16 +320,22 @@ existing internal calls were found to need them too):
 - file-service: all 8 RPCs, blanket — see that section (not a per-RPC allowlist, `FilePrincipalTierPolicy` returns SERVICE unconditionally)
 - integration: `GetAccessToken`
 - calendar: `DeleteExternalCalendarDataForConnection`
+- telegram: `ShouldDeliver`
 - subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription`, `DevResetOrgToFree` (dev/test-only), `ListPlans` (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them — of those, `ListPlans` came back to SP on 2026-09-25 for the logged-out marketing landing page; see its table row)
 - billing-service: `CreateInvoice`, `ListInvoices`, `GetBillingAccount`
 
-Everything else in the platform requires genuine `UserPrincipal`, with exactly three AUP exceptions:
-**doc-service's `GetCollabState`/`SaveCollabState`** and, added for personal API tokens
-(api-tokens-design.md), **task-service's `CreateTask`** and **doc-service's `CreatePage`/`PublishPage`**
-(see those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
-AUP. integration-service and calendar-service each define exactly one `PrincipalTierPolicy` entry
+Everything else in the platform requires genuine `UserPrincipal`, with exactly three reviewed AUP
+exception categories: **doc-service's `GetCollabState`/`SaveCollabState`** (#1); added for personal API
+tokens (api-tokens-design.md), **task-service's `CreateTask`** and **doc-service's
+`CreatePage`/`PublishPage`** (#2); and, added for the Telegram integration (telegram-contracts.md),
+**telegram-service acting for a linked user** (#3) — org-service's `GetOrganization`, chat-service's
+`GetMessage`, calendar-service's `GetEventDetail`, and task-service's `GetTask`, `GetProject`,
+`ListMyProjects`, `ListTaskTypes`, `ListWorkflowStatuses`, `ListWorkflowTransitions`,
+`ChangeTaskStatus`, `UpdateTask`, `CreateTaskComment`, `AttachFileToTask` and `ListMyOpenTasks` (see
+those sections and the rule note above) — no other RPC anywhere on the platform is allowlisted for
+AUP. integration-service and calendar-service each defined exactly one `PrincipalTierPolicy` entry
 (`GetAccessToken` and `DeleteExternalCalendarDataForConnection` respectively) — both previously had
-none.
+none; calendar-service now also has `GetEventDetail` (AUP, #3).
 
 (`PublishPage` was added after the 2026-09-07 audit below, alongside `CreateTask`/`CreatePage` under
 the same personal-API-token exception category — the audit's "four additions" count predates it.)
