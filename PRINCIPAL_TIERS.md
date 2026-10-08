@@ -118,6 +118,7 @@ GetBillingAccount tier gap above is the worked example for step 5.
 | ListMyOrganizations | UP | Caller's own org memberships. |
 | ListOrganizations | **SP** | Staff-tier, every org platform-wide (not the caller's own) — added for subscription-service's SubscriptionBackfillRunner (subscriptions Phase 2 §0.2). No identity field, same trust level as IsOrgMember/BatchGetUsers. |
 | GetOrgSeatCount | **SP** | Trusted-internal member count — added for subscription-service's ChangePlan (subscriptions Phase 2b §2), so a plan change can never set seats below the org's actual current member count. No identity field, same trust level as IsOrgMember. |
+| LookupOrgMembersByEmail | **SP** | Jira/Confluence import people matching (claude/atlassian-import-design.md §9): which of up to 500 emails are members of one org. A batch oracle like FilterOrgMembers, so the handler also requires a caller that presented the internal shared secret — SP alone is only a floor. Returns members of that org only, never other orgs' users. |
 | GetOrgIdBySubdomain | **SP** | Auth remediation Step 4 addition — bare subdomain→org_id lookup, no membership check by design (subdomains are public/DNS-like, same reasoning ListOrganizations/BatchGetUsers already rely on). This is what api-gateway calls to resolve org context from the `Host` header before it knows anything about the caller. |
 | HasPermission | UP (default) — **deliberately not SP**, unlike its same-shape siblings HasScopeAccess/IsScopeAdmin | Auth remediation Step 1b: found reachable as a user/scope oracle when left at the tier system's mercy alone (any caller's identity strength trivially satisfies a weak tier requirement — that's true regardless of which tier this one is declared, since the check is "at least this strong," not "exactly this"). Fixed with a handler-level check instead of a tier change: the request's `user_id` must equal the caller's own identity unless the caller is a genuine `ServicePrincipal` (checked via `instanceof`, not the tier system). Recorded here so the tier declaration doesn't look like an oversight next to its SP-tier siblings — it's UP by default and that's fine, because the real gate is in the handler. |
 | UpdateOrganization | UP | Org Admin only. |
@@ -165,6 +166,7 @@ sprints, doc-links. Explicit exceptions:
 | ListTaskComments | **AUP** (was UP) — reviewed exception #3 | "Show full" on a task.commented / task.mentioned notification pages through it to find the comment (there is no comment-by-id read). Same `projectGuard.loadWithAccess` as a browser call. |
 | BatchGetTaskSummaries | UP | "No per-task filtering beyond normal authenticated caller" per comment — confirm this isn't over-broad once enforced; keep at UP, don't downgrade. |
 | LinkDoc | UP | Cross-service call to Doc Service — verify the *user's* identity is forwarded (not re-asserted with elevated trust) when Task Service calls Doc Service on the user's behalf. |
+| ImportProject / ImportTaskTypes / ImportCustomFields / ImportSprints / ImportTasks / ImportTaskBlocks / ImportTaskComments / FinishProjectImport | **SP** | The Jira importer's write path (claude/atlassian-import-design.md §14). import-service runs a job for hours after the admin who started it has gone, so there is no JWT to forward and no per-call user to assert; it requires an Org Admin itself, at start and on every resume. Each RPC names its org and still enforces org ownership of every id, org membership of every user, and plan quotas; the org-catalog writes (types, fields) re-check Org Admin. Because SP is only a floor, `ImportGrpcHandler` additionally refuses any caller that is not a `ServicePrincipal` naming itself `import-service` — a self-declared header, so defence in depth against mis-wiring, not authentication. Create-only: there is no import update or delete. |
 
 ## doc_service.proto (37 RPCs)
 
@@ -182,6 +184,7 @@ rather than a blanket AUP/SP grant:
 | SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint. |
 | CreatePage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | A personal-API-token-authenticated gateway request has no forwardable JWT either — same structural reasoning as GetCollabState/SaveCollabState, different caller (api-gateway vouching for a token owner, not websocket-service vouching for a ticket holder). A real browser session still always forwards a genuine JWT and satisfies this trivially; space/entitlement access checks downstream are unchanged. |
 | PublishPage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | Same reasoning and same PAT scope (`doc:create`) as CreatePage — lets a token write real content into a page it just created, not just an empty shell. `PageAccessGuard.requireAccess`/`requireWriteAccess` still independently verify the resolved user actually has space/org write access to that specific page; the tier downgrade only affects whether the asserted identity itself is accepted, not what it's allowed to touch. |
+| ImportSpace / ImportPages / ImportPageComments / FinishSpaceImport | **SP** | The Confluence half of the same importer, same reasoning and the same handler-level `import-service` check as task-service's Import* RPCs. Restricted pages are refused unless the org has `permissions.page.restrictions`, so nothing is ever imported more open than it was. |
 
 ## chat_service.proto (21 RPCs)
 
@@ -327,8 +330,9 @@ calendar-service's `DeleteExternalCalendarDataForConnection`; billing-service ad
 `CreateInvoice` at scaffold time, then `ListInvoices`/`GetBillingAccount` once `GrpcBillingClient`'s
 existing internal calls were found to need them too):
 
-- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`, `ValidateApiToken`
-- task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`
+- org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`, `ValidateApiToken`, `LookupOrgMembersByEmail` (Jira/Confluence import people matching; handler also requires the internal shared secret)
+- task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`, and the eight import RPCs (`ImportProject` … `FinishProjectImport`)
+- doc: `ImportSpace`, `ImportPages`, `ImportPageComments`, `FinishSpaceImport`
 - notification: `CreateNotification`
 - file-service: all 8 RPCs, blanket — see that section (not a per-RPC allowlist, `FilePrincipalTierPolicy` returns SERVICE unconditionally)
 - integration: `GetAccessToken`
