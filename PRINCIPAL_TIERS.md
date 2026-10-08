@@ -57,6 +57,12 @@ task it creates. See `FileAccessGuard#loadFileForTelegramAttach`. Download URLs 
 file-service RPC keep the strict check. A plain ServicePrincipal still has no sub, so billing-service's
 own server-side `ConfirmUpload` of invoice PDFs still looks affected — not addressed here.
 
+**Import exception (operator decision 2026-10-08):** the Jira/Confluence importer has no user behind any
+call, so file-service's `FileAccessGuard` also accepts a bare `ServicePrincipal` named `import-service` on
+`ConfirmUpload` (its own uploads), and `import-service` / `task-service` / `doc-service` on `GetFile`
+(metadata only — while an import RPC attaches a file to a shelf, which checks the file's org). Download URLs
+and every other file RPC keep the strict check. billing-service is deliberately NOT on the list.
+
 ---
 
 ## New service checklist
