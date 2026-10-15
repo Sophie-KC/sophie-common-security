@@ -107,7 +107,7 @@ class StaffPrincipalResolutionTest {
     /** Never actually parses a real JWT — always throws, so the interceptor moves on to whichever
      *  fallback (or none) the test configured. */
     private static JwtVerifier alwaysRejects() {
-        return new JwtVerifier("http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called") {
+        return new JwtVerifier("http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called", null) {
             @Override
             public JWTClaimsSet verify(String compactJwt) throws ParseException {
                 throw new ParseException("test double: always rejects", 0);
@@ -116,7 +116,7 @@ class StaffPrincipalResolutionTest {
     }
 
     private static JwtVerifier claimsAlwaysVerifyTo(JWTClaimsSet claims) {
-        return new JwtVerifier("http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called") {
+        return new JwtVerifier("http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called", null) {
             @Override
             public JWTClaimsSet verify(String compactJwt) {
                 return claims;

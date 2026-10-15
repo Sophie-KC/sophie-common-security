@@ -49,8 +49,6 @@ public class JwtServerInterceptor implements ServerInterceptor {
             Metadata.Key.of("x-internal-service-name", Metadata.ASCII_STRING_MARSHALLER);
     static final Metadata.Key<String> USER_ID =
             Metadata.Key.of("x-user-id", Metadata.ASCII_STRING_MARSHALLER);
-    static final Metadata.Key<String> ORG_ROLE =
-            Metadata.Key.of("x-org-role", Metadata.ASCII_STRING_MARSHALLER);
     static final Metadata.Key<String> ASSERTED_USER_ID =
             Metadata.Key.of("x-asserted-internal-user-id", Metadata.ASCII_STRING_MARSHALLER);
     static final Metadata.Key<String> ASSERTED_KEYCLOAK_SUB =
@@ -151,7 +149,6 @@ public class JwtServerInterceptor implements ServerInterceptor {
         }
 
         String suppliedUserId = headers.get(USER_ID);
-        String suppliedOrgRole = headers.get(ORG_ROLE);
 
         comparisonLogger.compare(methodName, principal, suppliedUserId);
 
@@ -160,6 +157,16 @@ public class JwtServerInterceptor implements ServerInterceptor {
             if (actualTier == null) {
                 call.close(Status.UNAUTHENTICATED.withDescription(
                         "No verified identity presented for " + methodName), new Metadata());
+                return new ServerCall.Listener<>() {};
+            }
+            // Forged-header impersonation: a supplied x-user-id that contradicts the verified identity
+            // can only come from a header the gateway did not set. Reject before the handler runs, so a
+            // downstream reader of the forwarded id can never act as a user other than the verified one.
+            if (IdentityComparisonLogger.isForgedUserIdMismatch(principal, suppliedUserId)) {
+                log.warn("Rejecting {}: supplied x-user-id contradicts verified identity", methodName);
+                call.close(Status.PERMISSION_DENIED.withDescription(
+                        "Supplied user identity does not match the verified identity for " + methodName),
+                        new Metadata());
                 return new ServerCall.Listener<>() {};
             }
             PrincipalTier requiredTier = tierPolicy != null ? tierPolicy.requiredTier(methodName) : null;
@@ -177,12 +184,6 @@ public class JwtServerInterceptor implements ServerInterceptor {
         Context context = Context.current().withValue(SophieSecurityContext.PRINCIPAL, principal);
         if (rawToken != null) {
             context = context.withValue(SophieSecurityContext.RAW_TOKEN, rawToken);
-        }
-        if (suppliedUserId != null) {
-            context = context.withValue(SophieSecurityContext.FORWARDED_USER_ID, suppliedUserId);
-        }
-        if (suppliedOrgRole != null) {
-            context = context.withValue(SophieSecurityContext.FORWARDED_ORG_ROLE, suppliedOrgRole);
         }
         if (principal instanceof AssertedUserPrincipal aup) {
             context = context.withValue(SophieSecurityContext.ASSERTED_INTERNAL_USER_ID, aup.internalUserId());

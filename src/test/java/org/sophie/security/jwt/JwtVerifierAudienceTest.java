@@ -100,12 +100,12 @@ class JwtVerifierAudienceTest {
     }
 
     @Test
-    void deprecatedTwoArgConstructorSkipsAudienceValidationEntirely() throws Exception {
-        @SuppressWarnings("deprecation")
-        JwtVerifier verifier = new JwtVerifier(jwkSetUri, ISSUER);
+    void nullExpectedAudienceSkipsAudienceValidationEntirely() throws Exception {
+        JwtVerifier verifier = new JwtVerifier(jwkSetUri, ISSUER, null);
 
-        // No audience at all still passes — documents the deprecated overload's exact behavior
-        // rather than leaving it as an untested footgun.
+        // A null expected audience still passes any token — documents the opt-out behavior rather
+        // than leaving it as an untested footgun. (The deprecated no-audience constructor was removed;
+        // callers that genuinely want no audience check must now pass null explicitly.)
         String token = signedToken(null);
 
         assertDoesNotThrow(() -> verifier.verify(token));
