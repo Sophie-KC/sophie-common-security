@@ -30,6 +30,28 @@ public class IdentityComparisonLogger {
         this.serviceName = serviceName;
     }
 
+    /**
+     * True only for the one signal that always means impersonation: a user-shaped verified principal
+     * whose resolved internal id is present, a supplied {@code x-user-id} that is also present, and the
+     * two differ. The gateway always forwards {@code x-user-id} derived from the same verified token, so
+     * a divergence cannot arise from a legitimate caller — only from a header forged by something other
+     * than the gateway (e.g. a backend peer on the flat internal network). Absent/unresolved ids and
+     * Service/Staff principals are never a mismatch (a call correctly scoped via a differently-named
+     * field legitimately carries no {@code x-user-id}). Callers reject this under {@code enforce}; it is
+     * deliberately narrower than the WARN logging in {@link #compare}, which also flags non-propagation.
+     */
+    public static boolean isForgedUserIdMismatch(SophiePrincipal verified, String suppliedUserId) {
+        if (verified == null || suppliedUserId == null || suppliedUserId.isBlank()) {
+            return false;
+        }
+        String internalUserId = switch (verified) {
+            case UserPrincipal up -> up.internalUserId();
+            case AssertedUserPrincipal aup -> aup.internalUserId();
+            default -> null;
+        };
+        return internalUserId != null && !internalUserId.isBlank() && !internalUserId.equals(suppliedUserId);
+    }
+
     public void compare(String rpcMethod, SophiePrincipal verified, String suppliedUserId) {
         boolean suppliedPresent = suppliedUserId != null && !suppliedUserId.isBlank();
 

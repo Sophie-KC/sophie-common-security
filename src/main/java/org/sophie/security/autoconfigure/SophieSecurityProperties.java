@@ -11,10 +11,12 @@ public class SophieSecurityProperties {
     private String serviceName;
 
     /** When true, {@link org.sophie.security.grpc.JwtServerInterceptor} rejects unauthenticated
-     *  calls and calls below an RPC's required {@link org.sophie.security.policy.PrincipalTier}
-     *  instead of just logging the comparison. Default false so a service can be built with the
-     *  updated library without changing behavior until explicitly flipped. */
-    private boolean enforce = false;
+     *  calls, calls below an RPC's required {@link org.sophie.security.policy.PrincipalTier}, and
+     *  calls whose supplied {@code x-user-id} contradicts the verified identity (forged-header
+     *  impersonation) instead of just logging the comparison. Defaults to true (fail-closed): the
+     *  phase-1 rollout is complete and every service already sets this explicitly, so the safe
+     *  default is to enforce. Disabling it is an explicit, loud opt-out, never an accidental one. */
+    private boolean enforce = true;
 
     private Internal internal = new Internal();
 

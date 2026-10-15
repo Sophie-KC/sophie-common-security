@@ -162,6 +162,16 @@ public class JwtServerInterceptor implements ServerInterceptor {
                         "No verified identity presented for " + methodName), new Metadata());
                 return new ServerCall.Listener<>() {};
             }
+            // Forged-header impersonation: a supplied x-user-id that contradicts the verified identity
+            // can only come from a header the gateway did not set. Reject before the handler runs, so a
+            // downstream reader of the forwarded id can never act as a user other than the verified one.
+            if (IdentityComparisonLogger.isForgedUserIdMismatch(principal, suppliedUserId)) {
+                log.warn("Rejecting {}: supplied x-user-id contradicts verified identity", methodName);
+                call.close(Status.PERMISSION_DENIED.withDescription(
+                        "Supplied user identity does not match the verified identity for " + methodName),
+                        new Metadata());
+                return new ServerCall.Listener<>() {};
+            }
             PrincipalTier requiredTier = tierPolicy != null ? tierPolicy.requiredTier(methodName) : null;
             if (requiredTier == null) {
                 requiredTier = PrincipalTierPolicy.DEFAULT_TIER;
