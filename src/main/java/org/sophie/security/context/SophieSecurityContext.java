@@ -16,8 +16,6 @@ public final class SophieSecurityContext {
 
     public static final Context.Key<SophiePrincipal> PRINCIPAL = Context.key("sophie-principal");
     public static final Context.Key<String> RAW_TOKEN = Context.key("sophie-raw-token");
-    public static final Context.Key<String> FORWARDED_USER_ID = Context.key("sophie-forwarded-user-id");
-    public static final Context.Key<String> FORWARDED_ORG_ROLE = Context.key("sophie-forwarded-org-role");
 
     /** Set by a service that resolved a real user's identity through an out-of-band mechanism it
      *  trusts (e.g. a redeemed ticket), not a JWT it can forward — see {@link
