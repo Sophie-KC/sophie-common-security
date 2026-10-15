@@ -142,7 +142,7 @@ class ForgedUserIdMismatchTest {
 
     private static JwtVerifier unusableJwtVerifier() {
         return new JwtVerifier(
-                "http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called");
+                "http://localhost:1/should-never-be-called/certs", "http://localhost:1/should-never-be-called", null);
     }
 
     private static MethodDescriptor.Marshaller<Object> noopMarshaller() {

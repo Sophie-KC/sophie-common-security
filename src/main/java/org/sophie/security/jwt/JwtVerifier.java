@@ -34,15 +34,6 @@ public class JwtVerifier {
     private final ConfigurableJWTProcessor<SecurityContext> processor;
     private final String expectedAudience;
 
-    /** @deprecated use {@link #JwtVerifier(String, String, String)} — this overload validates no
-     *  audience at all, which lets a token minted for any Keycloak client in the realm (including
-     *  one this service never expects to hear from) pass verification here. Kept only so a caller
-     *  that genuinely cannot supply an audience yet doesn't fail to compile. */
-    @Deprecated
-    public JwtVerifier(String jwkSetUri, String issuer) {
-        this(jwkSetUri, issuer, null);
-    }
-
     /**
      * @param expectedAudience required {@code aud} value, or {@code null}/blank to skip audience
      *                         validation entirely (not recommended — see the deprecated overload).
