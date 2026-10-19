@@ -208,6 +208,7 @@ Default **UP** for all messaging/reactions/pins/read-state. Never-assert excepti
 | DeleteMessage | UP | Sender or role-gated. |
 | UpdateChannelDescription / UpdateChannelName | UP | OWNER/ADMIN-gated. |
 | GetMessage | **AUP** (was UP) — reviewed exception #3 | telegram-service's "Show full" for a chat notification. The handler resolves the caller via `currentInternalUserId()` (`IdentityServerInterceptor` falls back to the verified principal when `x-user-id` is absent), and `MessageService.getMessage` keeps its `requireMember` check. |
+| ImportConversation / ImportMessages / ImportPins / FinishConversationImport | **SP** | The Slack importer (claude/slack-import-design.md §9), same reasoning and the same handler-level `import-service` check as task-service's and doc-service's Import* RPCs. They set authors and timestamps the send path fixes to "caller, now", so the handler admits import-service's ServicePrincipal only. Create-only and org-scoped: every user named must be an org member (invited members count) and a member of the channel; ImportConversation re-checks that `imported_by` is an Org Admin. File references go through file-service's `ReplaceReferences` with the org id, which refuses other orgs' files. |
 
 ## search_service.proto (2 RPCs)
 
@@ -340,6 +341,7 @@ existing internal calls were found to need them too):
 - org: `ValidateSession`, `SignUp`, `IsOrgMember`, `IsOrgAdmin`, `HasScopeAccess`, `ListScopeMembers`, `IsScopeAdmin`, `AssignScopeRole`, `HasRoleAssignment`, `RoleExists`, `BatchGetUsers`, `ListOrganizations`, `GetOrgSeatCount`, `GetOrgIdBySubdomain`, `ValidateApiToken`, `LookupOrgMembersByEmail` (Jira/Confluence import people matching; handler also requires the internal shared secret)
 - task: `ResolveTaskReferenceInternal`, `ProcessVcsWebhookEvent`, `DeleteVcsReferencesForConnection`, and the eight import RPCs (`ImportProject` … `FinishProjectImport`)
 - doc: `ImportSpace`, `ImportPages`, `ImportPageComments`, `FinishSpaceImport`
+- chat: `ImportConversation`, `ImportMessages`, `ImportPins`, `FinishConversationImport` (Slack import, handler admits `import-service` only), alongside the existing `RequestReindex`, `AddMemberToOrgChannels` and `ExportOrg`
 - notification: `CreateNotification`
 - file-service: all 8 RPCs, blanket — see that section (not a per-RPC allowlist, `FilePrincipalTierPolicy` returns SERVICE unconditionally)
 - integration: `GetAccessToken`
