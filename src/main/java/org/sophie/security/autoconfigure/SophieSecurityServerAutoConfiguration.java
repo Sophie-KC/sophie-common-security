@@ -3,6 +3,7 @@ package org.sophie.security.autoconfigure;
 import io.grpc.ServerInterceptor;
 import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 import org.sophie.security.comparison.IdentityComparisonLogger;
+import org.sophie.security.grpc.InternalUserIdRequiredServerInterceptor;
 import org.sophie.security.grpc.JwtServerInterceptor;
 import org.sophie.security.jwt.JwtVerifier;
 import org.sophie.security.policy.PrincipalTierPolicy;
@@ -13,6 +14,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -81,5 +83,15 @@ public class SophieSecurityServerAutoConfiguration {
         return new JwtServerInterceptor(jwtVerifier, staffJwtVerifierProvider.getIfAvailable(),
                 props.getInternal().getSharedSecret(), comparisonLogger,
                 props.isEnforce(), tierPolicyProvider.getIfAvailable());
+    }
+
+    /** Right after {@link #sophieJwtServerInterceptor}, whose verified principal it reads from the gRPC
+     *  context. Opt-in: see {@link InternalUserIdRequiredServerInterceptor}. */
+    @Bean
+    @GrpcGlobalServerInterceptor
+    @Order(Ordered.HIGHEST_PRECEDENCE + 15)
+    @ConditionalOnProperty(prefix = "sophie.security.require-internal-user-id", name = "enabled", havingValue = "true")
+    public ServerInterceptor sophieInternalUserIdRequiredInterceptor(SophieSecurityProperties props) {
+        return new InternalUserIdRequiredServerInterceptor(props.getRequireInternalUserId().getExemptMethods());
     }
 }

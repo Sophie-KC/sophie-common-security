@@ -92,7 +92,11 @@ public class IdentityComparisonLogger {
         }
 
         if (!suppliedPresent) {
-            log.warn("reason=VERIFIED_NOT_PROPAGATED principalKind={} service={} rpc={} verified={}",
+            // DEBUG, not WARN: service-to-service calls never carry x-user-id (by design — they forward the
+            // verified JWT instead), so this fired on every internal hop. In the 2026-10-20 load test it was
+            // ~1,000 lines/s from org-service at 80 searches/s, and shipping them cost ~1.5 cores. The
+            // signals that mean something stay at WARN: MISMATCH, NO_VERIFIABLE_IDENTITY, UNRESOLVED.
+            log.debug("reason=VERIFIED_NOT_PROPAGATED principalKind={} service={} rpc={} verified={}",
                     principalKind, serviceName, rpcMethod, internalUserId);
             return;
         }
