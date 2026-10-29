@@ -14,7 +14,9 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Where the org variable CI_RUNNER points (e.g. `sophie-mac`, the self-hosted runners on the operator's Mac),
+    # else GitHub-hosted. Same switch as sophie-ci java-service.yml.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +36,9 @@ jobs:
         uses: gradle/actions/wrapper-validation@v4
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # ~/.gradle persists on a self-hosted runner; the Actions cache round trip only costs time there.
+          cache-disabled: ${{ runner.environment == 'self-hosted' }}
 
       - name: Verify tag matches declared version
         if: startsWith(github.ref, 'refs/tags/')
