@@ -52,6 +52,11 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    SpaceGuard, author-only for comment edits, no `AccessGuard`. Deletes stay out, and so do attachment
    download URLs: file-service's `GetDownloadUrl` keeps its JWT-only check (exception #3's note), so a token
    lists files but can't fetch them.
+   **Widened again 2026-10-30 for `attach_file` (claude/mcp-design.md §18, operator decision):** doc-service
+   `AttachFileToPage` (task-service `AttachFileToTask` already was, under #3). Same check: PageAccessGuard edit on
+   `currentInternalUserId()` plus the file's own org. Uploads go through the gateway's `FileController`, which sets the
+   uploader and checks org membership; see the file-service note under exception #3 for `ConfirmUpload` / `GetFile`.
+   Removing an attachment stays out.
 3. **telegram-service acts for a linked user** (claude/telegram-contracts.md): when a user taps
    "Show full" or a task action inside Telegram, there is no browser session and no forwardable JWT —
    the user is acting inside Telegram, and the only thing tying them to Sophie KC is their Telegram
@@ -74,7 +79,10 @@ AccessGuard-backed path. **One narrow exception, by operator decision:** file-se
 and `GetFile` (metadata only) accept an asserted user vouched for by `telegram-service` (or by
 `task-service` re-asserting that user during `AttachFileToTask`) when that user is an ACTIVE member of
 the file's own org (`IsOrgMember`) — so a screenshot sent to the Telegram bot can be attached to the
-task it creates. See `FileAccessGuard#loadFileForTelegramAttach`. Download URLs and every other
+task it creates. See `FileAccessGuard#loadFileForTelegramAttach`. **Widened 2026-10-30 (operator decision,
+claude/mcp-design.md §18):** the same two calls also accept a user asserted by `api-gateway` (a personal API token's
+owner confirming their own upload) and by `doc-service` (re-asserting that user during `AttachFileToPage`), with the
+same `IsOrgMember` check on the file's org. Download URLs and every other
 file-service RPC keep the strict check. A plain ServicePrincipal still has no sub, so billing-service's
 own server-side `ConfirmUpload` of invoice PDFs still looks affected — not addressed here.
 
