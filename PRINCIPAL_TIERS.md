@@ -42,6 +42,16 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    `currentInternalUserId()` and runs its normal guards (ProjectGuard, SpaceGuard, PageAccessGuard,
    membership, entitlements); none goes through `AccessGuard`. The token's scopes are capped by the
    owner's current role on every use (org-service `AgentScopePolicy`). `CreateTaskType` stays UP.
+   **Widened again 2026-10-30 for the second round of MCP tools (claude/mcp-design.md §17):** task-service
+   `SetTaskArchived`, `SetTaskParent`, `SetTaskEpic`, `MoveTaskToSprint`, `AddTaskLabel`, `RemoveTaskLabel`,
+   `CreateLabel`, `ListLabels`, `BlockTask`, `UnblockTask`, `LinkDoc`, `UnlinkDoc`, `ListLinkedDocs`,
+   `SetTaskFieldValues`, `ListProjectFields`, `ListSprints`, `CreateSprint`, `StartSprint`, `CompleteSprint`,
+   `EditTaskComment`, `GetTaskTime`, `LogWork`, `SetTaskEstimate`, `ListTaskAttachments`; doc-service
+   `EditComment`, `RenamePage`, `MovePage`, `CreateSpace`, `ListPageAttachments`, `LinkTask`, `UnlinkTask`,
+   `ListDocsLinkedToTask`. Same check: `currentInternalUserId()` plus ProjectGuard / PageAccessGuard /
+   SpaceGuard, author-only for comment edits, no `AccessGuard`. Deletes stay out, and so do attachment
+   download URLs: file-service's `GetDownloadUrl` keeps its JWT-only check (exception #3's note), so a token
+   lists files but can't fetch them.
 3. **telegram-service acts for a linked user** (claude/telegram-contracts.md): when a user taps
    "Show full" or a task action inside Telegram, there is no browser session and no forwardable JWT —
    the user is acting inside Telegram, and the only thing tying them to Sophie KC is their Telegram
