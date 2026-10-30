@@ -31,6 +31,17 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    exactly as before), and API tokens are the ONLY way to reach these three RPCs via AUP; a browser
    session still always forwards a real JWT. `PublishPage` shares `CreatePage`'s `doc:create` PAT
    scope rather than getting its own — see `ApiTokenScopeRegistry`'s own doc comment in api-gateway.
+   **Widened 2026-10-30 for MCP over a PAT (claude/mcp-design.md §16):** a token with MCP scopes reaches
+   the gateway's agent route table, so the RPCs behind those routes are AUP too — org-service
+   `GetMyOrganizationBySubdomain`, `SearchOrgMembers`, `HasPermission` (handler already self-only for
+   non-service callers), `CheckAgentUse`, `GetMyAgentScopes`; task-service `ListTasks`, `ListBoards`,
+   `ListProjectTemplates`, `GetTaskByReference`, `CreateProject`, `CreateWorkflowStatus`,
+   `UpdateWorkflowStatus`, `ReorderWorkflowStatuses`, `CreateWorkflowTransition`, `CreateBoard`;
+   doc-service `GetSpace`, `ListMySpaces`, `ListPagesInSpace`, `GetPage`, `GetPageContent`, `ListComments`,
+   `CreateComment`. Each handler was read before it was added: it resolves the caller through
+   `currentInternalUserId()` and runs its normal guards (ProjectGuard, SpaceGuard, PageAccessGuard,
+   membership, entitlements); none goes through `AccessGuard`. The token's scopes are capped by the
+   owner's current role on every use (org-service `AgentScopePolicy`). `CreateTaskType` stays UP.
 3. **telegram-service acts for a linked user** (claude/telegram-contracts.md): when a user taps
    "Show full" or a task action inside Telegram, there is no browser session and no forwardable JWT —
    the user is acting inside Telegram, and the only thing tying them to Sophie KC is their Telegram
