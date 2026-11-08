@@ -57,6 +57,9 @@ AUP's use anywhere else. Any other privileged/tenant-crossing RPC still must req
    `currentInternalUserId()` plus the file's own org. Uploads go through the gateway's `FileController`, which sets the
    uploader and checks org membership; see the file-service note under exception #3 for `ConfirmUpload` / `GetFile`.
    Removing an attachment stays out.
+   **Widened 2026-11-08 for backlinks (Viktor feedback #8):** doc-service `ListPageBacklinks`. Read-only: PageAccessGuard
+   view on the page, then `filterAccessible` on every page that links to it, so a token never learns of a page its
+   owner can't open.
 3. **telegram-service acts for a linked user** (claude/telegram-contracts.md): when a user taps
    "Show full" or a task action inside Telegram, there is no browser session and no forwardable JWT —
    the user is acting inside Telegram, and the only thing tying them to Sophie KC is their Telegram
