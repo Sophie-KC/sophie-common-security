@@ -144,6 +144,7 @@ GetBillingAccount tier gap above is the worked example for step 5.
 | CreateOrganization | **UP** | Creates a tenant; `created_by_user_id` must not be spoofable to attribute org creation to someone else. |
 | ListUserScopeAccess | **AUP** (was UP) — reviewed exception #3, one hop downstream | task-service's `ListMyProjects` / `ListMyOpenTasks` resolve the caller's project access here; when telegram-service calls them as a linked user the asserted identity propagates to this call. Like `ListMyRoleIds` it answers only about the verified caller. Found by running the Telegram draft flow, not by reading. |
 | GetOrganization | **AUP** (was UP) — reviewed exception #3 | telegram-service reads the linked org's name for the user it acts for. The handler resolves the caller via `currentInternalUserId()` and keeps its `isOrgMember` gate (PERMISSION_DENIED for a non-member), so an asserted user sees only orgs they belong to. |
+| EnsureSystemIntegrationAccount | **SP** | telegram-service gets or creates the org's built-in "Telegram" integration account (claude/telegram-groups-design.md §5) — the author of group tasks whose sender has no Sofia account. Member role, no tokens, one per (org, system); no user in context. |
 | SignUp | **SP, no user principal** | No user exists yet. Must stay reachable with internal secret only — never a bare unauthenticated call. Not "public" — the secret is what keeps it internal. |
 | CreateOrgMember | **UP** | Comment: caller must be org's Org Admin. Provisions membership + role — privilege grant. |
 | ListOrgMembers | UP | Org Admin only. |
@@ -229,6 +230,7 @@ rather than a blanket AUP/SP grant:
 | SaveCollabState | **AUP** — same exception | Same caller, same constraint. Writes a document's collaborative checkpoint. |
 | CreatePage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | A personal-API-token-authenticated gateway request has no forwardable JWT either — same structural reasoning as GetCollabState/SaveCollabState, different caller (api-gateway vouching for a token owner, not websocket-service vouching for a ticket holder). A real browser session still always forwards a genuine JWT and satisfies this trivially; space/entitlement access checks downstream are unchanged. |
 | PublishPage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | Same reasoning and same PAT scope (`doc:create`) as CreatePage — lets a token write real content into a page it just created, not just an empty shell. `PageAccessGuard.requireAccess`/`requireWriteAccess` still independently verify the resolved user actually has space/org write access to that specific page; the tier downgrade only affects whether the asserted identity itself is accepted, not what it's allowed to touch. |
+| ImportPage | **AUP** — reviewed exception #3 | telegram-service turns a file the linked user forwarded to @SofiaSpaceBot into a page (claude/telegram-docs-design.md D1). Same handler-level checks as CreatePage + PublishPage (space EDITOR or parent-page edit grant, org write access), and the file must be ACTIVE, in the space's org and uploaded by the caller. |
 | ImportSpace / ImportPages / ImportPageComments / FinishSpaceImport | **SP** | The Confluence half of the same importer, same reasoning and the same handler-level `import-service` check as task-service's Import* RPCs. Restricted pages are refused unless the org has `permissions.page.restrictions`, so nothing is ever imported more open than it was. |
 
 ## chat_service.proto (21 RPCs)
@@ -357,13 +359,14 @@ yet, so no tier decision is due.
 | RegisterPushToken | UP | Upserts caller's own device token. |
 | UnregisterPushToken | UP (documented risk) | Proto comment says this is explicitly *token*-scoped, not caller-scoped — anyone holding a token value can unregister it, treated as a device secret by design. Keep at UP for the *call*, but this is a pre-existing accepted-risk design choice, not something Step 3 should silently "fix" by loosening/tightening without flagging it back to you first. |
 
-## telegram_service.proto (10 RPCs)
+## telegram_service.proto (13 RPCs)
 
 | RPC | Tier | Why |
 |---|---|---|
 | ShouldDeliver | **SP** | notification-service asks on a recipient's behalf, from its async after-commit delivery path — no user in context. Answers only "should this notification also go to Telegram" (bot configured, org enabled, ACTIVE link, type and scope enabled); returns nothing about the link itself. |
 | CreateLinkCode / GetLinkStatus / Unlink / GetTelegramPrefs / UpdateTelegramPrefs / GetScopePref / SetScopePref | UP | api-gateway forwards a real user. Each acts on the caller's own `currentInternalUserId()`, never a request field. |
 | GetOrgTelegramSettings / UpdateOrgTelegramSettings | UP | Same, plus Org Admin only (org-service `IsOrgAdmin`). |
+| ListGroupBindings / UpdateGroupBinding / DeleteGroupBinding | UP | api-gateway forwards a real user; Org Admin only. The Telegram groups that feed projects (claude/telegram-groups-design.md); bindings are created in Telegram by `/connect`, never through these. |
 
 ---
 
@@ -385,6 +388,7 @@ existing internal calls were found to need them too):
 - integration: `GetAccessToken`
 - calendar: `DeleteExternalCalendarDataForConnection`
 - telegram: `ShouldDeliver`
+- org (integrations): `EnsureSystemIntegrationAccount`
 - subscription-service: `GetEntitlements`, `CheckEntitlement`, `CheckSeatAvailable`, `CreateFreeSubscription`, `DevResetOrgToFree` (dev/test-only), `ListPlans` (Phase 3 §4: `GetSubscription`/`ListPlans`/`PreviewPlanChange`/`ChangePlan`/`CancelSubscription`/`ResumeSubscription` moved off this list to UP, now that the Gateway forwards real callers to them — of those, `ListPlans` came back to SP on 2026-09-25 for the logged-out marketing landing page; see its table row)
 - billing-service: `CreateInvoice`, `ListInvoices`, `GetBillingAccount`
 
