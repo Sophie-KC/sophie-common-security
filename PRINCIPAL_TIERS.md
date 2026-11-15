@@ -231,6 +231,7 @@ rather than a blanket AUP/SP grant:
 | CreatePage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | A personal-API-token-authenticated gateway request has no forwardable JWT either — same structural reasoning as GetCollabState/SaveCollabState, different caller (api-gateway vouching for a token owner, not websocket-service vouching for a ticket holder). A real browser session still always forwards a genuine JWT and satisfies this trivially; space/entitlement access checks downstream are unchanged. |
 | PublishPage | **AUP** (was UP) — reviewed exception #2, api-tokens-design.md | Same reasoning and same PAT scope (`doc:create`) as CreatePage — lets a token write real content into a page it just created, not just an empty shell. `PageAccessGuard.requireAccess`/`requireWriteAccess` still independently verify the resolved user actually has space/org write access to that specific page; the tier downgrade only affects whether the asserted identity itself is accepted, not what it's allowed to touch. |
 | ImportPage | **AUP** — reviewed exception #3 | telegram-service turns a file the linked user forwarded to @SofiaSpaceBot into a page (claude/telegram-docs-design.md D1). Same handler-level checks as CreatePage + PublishPage (space EDITOR or parent-page edit grant, org write access), and the file must be ACTIVE, in the space's org and uploaded by the caller. |
+| ListRecentPages | **AUP** — reviewed exception #3 | The Telegram bot's inline mode with an empty query lists the linked user's own recent pages. Answers only about `currentInternalUserId()`, through the same access filter as the web. |
 | ImportSpace / ImportPages / ImportPageComments / FinishSpaceImport | **SP** | The Confluence half of the same importer, same reasoning and the same handler-level `import-service` check as task-service's Import* RPCs. Restricted pages are refused unless the org has `permissions.page.restrictions`, so nothing is ever imported more open than it was. |
 
 ## chat_service.proto (21 RPCs)
@@ -414,3 +415,9 @@ the same personal-API-token exception category — the audit's "four additions" 
 else — no RPC documented here as SP was found silently defaulting to UP in code (the direction
 that would indicate a broken internal caller), and no other undocumented non-default entry exists
 anywhere on the platform.
+
+## drive_service.proto — Telegram additions (2026-11-15)
+
+| RPC | Tier | Why |
+|---|---|---|
+| ListDrives / AddFile | **AUP** — reviewed exception #3 | "Save to Drive" from @SofiaSpaceBot (claude/telegram-docs-design.md D1). Both handlers resolve the caller only through `CallerResolver` (`currentInternalUserId()` + org membership); AddFile still requires the SHA-256 proof of holding the bytes. drive-service then re-asserts the user to file-service's `GetFile`, so `FileAccessGuard.TELEGRAM_ATTACH_ASSERTERS` gained `drive-service`. |
